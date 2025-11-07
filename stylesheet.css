@@ -1,0 +1,87 @@
+/* Dialog container takes whole screen; background transparent */
+.ctrl-alt-del-dialog {
+  background-color: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+/* Stretch the dialog actor to full screen */
+.ctrl-alt-del-dialog .modal-dialog,
+.ctrl-alt-del-dialog .modal-dialog-content-box,
+.full-fill {
+  width: 100% !important;
+  height: 100% !important;
+  background-color: transparent !important;
+}
+
+/* Lightbox = the black screen (ModalDialog creates this for primary monitor) */
+.lightbox {
+  background-color: rgb(0,0,0) !important;
+  opacity: 1.0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  left: 0 !important;
+  top: 0 !important;
+}
+
+/* Black overlays for all monitors - full screen black background */
+/* Size is set explicitly in JavaScript based on monitor geometry */
+.ctrl-alt-del-black-overlay {
+  background-color: rgb(0,0,0) !important;
+  opacity: 1.0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* Content column */
+.ctrl-alt-del-content {
+  padding-top: 200px;           /* vertical offset */
+  padding-left: 40px;
+  padding-right: 40px;
+}
+
+/* Vertical buttons column */
+.ctrl-alt-del-buttons {
+  spacing: 8px;                 /* Smaller spacing like Windows 11 */
+  width: 320px;                 /* Narrower width for smaller buttons */
+}
+
+/* Buttons: transparent, no outline by default (Windows 11 style) */
+.ctrl-alt-del-button {
+  background-color: transparent;
+  border-radius: 4px;
+  border: 1px solid transparent;  /* No visible border by default */
+  color: #fff;
+  font-weight: 400;
+  font-size: 13pt;               /* Smaller font like Windows 11 */
+  padding: 10px 16px;            /* Smaller padding */
+  min-height: 40px;              /* Smaller height */
+  width: 100%;
+}
+
+/* Hover: subtle background, no border */
+.ctrl-alt-del-button:hover {
+  background-color: rgba(255,255,255,0.05);
+  border-color: transparent;
+}
+
+/* Focus/Active: show outline (click or keyboard selection) */
+.ctrl-alt-del-button:focus,
+.ctrl-alt-del-button:active {
+  border-color: rgba(255,255,255,0.8);
+  background-color: rgba(255,255,255,0.08);
+  outline: none;                /* Remove default outline */
+}
+
+/* Keyboard navigation: show outline when focused via tab/arrow keys */
+.ctrl-alt-del-button:focus-visible {
+  border-color: rgba(255,255,255,0.8);
+  background-color: rgba(255,255,255,0.08);
+}
+
+.ctrl-alt-del-button.cancel-button {
+  margin-top: 20px;
+}
+

@@ -1,0 +1,8 @@
+{
+  "name": "Windows Ctrl+Alt+Del Screen",
+  "description": "Windows-style Ctrl+Alt+Del security screen",
+  "uuid": "ctrl-alt-del@local",
+  "shell-version": ["42", "43", "44", "45"],
+  "version": 1
+}
+

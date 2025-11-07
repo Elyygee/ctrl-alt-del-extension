@@ -1,0 +1,11 @@
+# Backup and test files
+*.backup
+*.full
+*.test
+
+# Log files
+*.log
+
+# Temporary files
+*~
+
