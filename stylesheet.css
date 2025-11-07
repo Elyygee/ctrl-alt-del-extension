@@ -59,26 +59,39 @@
   padding: 10px 16px;            /* Smaller padding */
   min-height: 40px;              /* Smaller height */
   width: 100%;
+  opacity: 1.0;
+  transition: opacity 0.2s ease;
 }
 
-/* Hover: subtle background, no border */
+/* Hover: small opacity change for identification (works on ALL buttons) */
 .ctrl-alt-del-button:hover {
-  background-color: rgba(255,255,255,0.05);
+  opacity: 0.65 !important;
+  background-color: rgba(255, 255, 255, 0.05) !important;
   border-color: transparent;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
 }
 
-/* Focus/Active: show outline (click or keyboard selection) */
+/* Focus/Active: show stroke only (no opacity or background change) */
 .ctrl-alt-del-button:focus,
 .ctrl-alt-del-button:active {
-  border-color: rgba(255,255,255,0.8);
-  background-color: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.8) !important;
+  background-color: transparent !important;
+  opacity: 1.0 !important;
   outline: none;                /* Remove default outline */
 }
 
-/* Keyboard navigation: show outline when focused via tab/arrow keys */
+/* When both hover and focus: show stroke AND hover opacity */
+.ctrl-alt-del-button:focus:hover {
+  border-color: rgba(255,255,255,0.8) !important;
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  opacity: 0.65 !important;
+}
+
+/* Keyboard navigation: show stroke when focused via tab/arrow keys */
 .ctrl-alt-del-button:focus-visible {
-  border-color: rgba(255,255,255,0.8);
-  background-color: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.8) !important;
+  background-color: transparent !important;
+  opacity: 1.0 !important;
 }
 
 .ctrl-alt-del-button.cancel-button {
