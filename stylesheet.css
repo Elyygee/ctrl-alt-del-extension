@@ -1,19 +1,63 @@
-/* Modal dialog - remove rounded edges and background from all containers */
-.ctrl-alt-del-dialog,
-.ctrl-alt-del-dialog *,
-.ctrl-alt-del-dialog .modal-dialog,
-.ctrl-alt-del-dialog .modal-dialog-content-box,
-.ctrl-alt-del-dialog .dialog,
-.ctrl-alt-del-dialog .dialog-content-box {
+/* DEBUG BORDERS - Each box has a different color for identification:
+ * Red: .ctrl-alt-del-dialog (main dialog actor)
+ * Orange: .modal-dialog (modal dialog container)
+ * Yellow: .modal-dialog-content-box (content box)
+ * Green: .ctrl-alt-del-content (button container wrapper)
+ * Blue: .ctrl-alt-del-buttons (button column)
+ * Purple: .ctrl-alt-del-power-box (power button container)
+ * Pink: .ctrl-alt-del-power-menu (power menu popup)
+ * Cyan: .ctrl-alt-del-power-button (power button itself)
+ * Electric cyan: .ctrl-alt-del-power-content / .ctrl-alt-del-power-buttons (power options panel)
+ */
+
+/* Modal dialog - spread across whole screen dynamically, border to border */
+.ctrl-alt-del-dialog {
     background-color: transparent !important;
     border-radius: 0 !important;
-    border: none !important;
+    border: 3px solid red !important;
     box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 100% !important;
+    min-height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
 }
 
-/* Content container - force left alignment */
+.ctrl-alt-del-dialog .modal-dialog {
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 100% !important;
+    min-height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    border: 3px solid orange !important;
+    background-color: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
 .ctrl-alt-del-dialog .modal-dialog-content-box {
-    padding-left: 40px;
+    width: 100% !important;
+    height: 100% !important;
+    min-width: 100% !important;
+    min-height: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 3px solid yellow !important;
+    background-color: transparent !important;
+    /* Force containment - prevent overflow beyond parent */
+    overflow: hidden !important;
+    box-sizing: border-box !important;
 }
 
 .ctrl-alt-del-content {
@@ -21,6 +65,15 @@
     margin-left: 0;
     background-color: transparent !important;
     border-radius: 0 !important;
+    border: 3px solid green !important;
+}
+
+.ctrl-alt-del-power-content {
+    padding-left: 0;
+    margin-left: 0;
+    background-color: transparent !important;
+    border-radius: 0 !important;
+    border: none !important;
 }
 
 /* Spacing between buttons - use CSS spacing property (GNOME Shell specific) */
@@ -34,6 +87,20 @@
     background-color: rgb(0, 0, 0) !important;
     padding: 16px;
     border-radius: 4px !important;
+    border: 3px solid blue !important;
+}
+
+.ctrl-alt-del-power-buttons {
+    spacing: 2px;
+    margin-left: 0;
+    margin-right: auto;
+    max-width: 220px;
+    width: 220px;
+    background-color: rgba(40, 40, 40, 0.98) !important; /* Dark gray */
+    padding: 8px;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
 /* Button font size and text alignment */
@@ -51,6 +118,68 @@
     padding-bottom: 8px;
     padding-left: 16px;
     padding-right: 16px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.ctrl-alt-del-power-option-button {
+    font-size: 14pt;
+    text-align: left;
+    background-color: transparent;
+    border: 1px solid transparent !important;
+    box-shadow: none;
+    width: 204px;
+    min-width: 204px;
+    max-width: 204px;
+    min-height: 44px;
+    padding: 0;
+    padding-left: 12px;
+    padding-right: 12px;
+    color: rgba(255, 255, 255, 0.9);
+    border-radius: 4px !important;
+    transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.ctrl-alt-del-power-option-button:hover {
+    background-color: rgba(255, 255, 255, 0.1) !important; /* 10% transparent light gray on hover */
+}
+
+.ctrl-alt-del-power-option-button:focus {
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border on focus (keyboard) */
+    background-color: transparent !important;
+}
+
+.ctrl-alt-del-power-option-button:hover:focus {
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border takes precedence */
+    background-color: rgba(255, 255, 255, 0.1) !important; /* Keep hover background */
+}
+
+.ctrl-alt-del-power-buttons .ctrl-alt-del-power-option-button St.Label {
+    text-align: left;
+}
+
+.ctrl-alt-del-power-option-box {
+    spacing: 12px;
+    padding: 0;
+    margin: 0;
+}
+
+.ctrl-alt-del-power-option-icon {
+    icon-size: 20px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.ctrl-alt-del-power-option-label {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.ctrl-alt-del-power-option-button:hover .ctrl-alt-del-power-option-icon,
+.ctrl-alt-del-power-option-button:focus .ctrl-alt-del-power-option-icon {
+    color: rgba(255, 255, 255, 1) !important;
+}
+
+.ctrl-alt-del-power-option-button:hover .ctrl-alt-del-power-option-label,
+.ctrl-alt-del-power-option-button:focus .ctrl-alt-del-power-option-label {
+    color: rgba(255, 255, 255, 1) !important;
 }
 
 /* White stroke when button is focused (keyboard navigation) */
@@ -66,6 +195,12 @@
     text-align: left;
     padding-left: 0;
     margin-left: 0;
+    color: inherit !important;
+}
+
+.ctrl-alt-del-button:hover,
+.ctrl-alt-del-button:hover St.Label {
+    color: rgba(210, 210, 210, 0.95) !important;
 }
 
 /* Cancel button - smaller hitbox and rounded corners */
@@ -85,5 +220,90 @@
 /* Center the label text inside Cancel button */
 .ctrl-alt-del-button.cancel-button St.Label {
     text-align: center;
+}
+
+.ctrl-alt-del-power-box {
+    spacing: 8px;
+    padding: 0;
+    margin: 0;
+    /* Ensure power box stays within dialog boundaries */
+    max-width: 100%;
+    max-height: 100%;
+    overflow: hidden;
+    border: 3px solid purple !important;
+}
+
+.ctrl-alt-del-power-button {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
+    background-color: rgba(0, 0, 0, 0.85);
+    border: none !important;
+    padding: 0 !important;
+    box-shadow: none !important;
+    transition: background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.ctrl-alt-del-power-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    box-shadow: none !important;
+}
+
+.ctrl-alt-del-power-button:focus {
+    background-color: rgba(0, 0, 0, 0.85);
+    box-shadow: 0 0 0 1px rgba(200, 200, 200, 0.5) !important;
+}
+
+.ctrl-alt-del-power-icon {
+    icon-size: 26px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.ctrl-alt-del-power-menu {
+    spacing: 8px;
+    margin-bottom: 12px;
+    background-color: rgba(20, 20, 20, 0.92);
+    border-radius: 16px;
+    border: 3px solid pink !important;
+    padding: 12px 16px;
+    min-width: 200px;
+    width: auto;
+    visibility: visible !important;
+}
+
+.ctrl-alt-del-power-option {
+    font-size: 14pt;
+    background-color: transparent;
+    border-radius: 10px;
+    border: 1px solid transparent;
+    padding: 8px 12px;
+    text-align: left;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.ctrl-alt-del-power-option:hover,
+.ctrl-alt-del-power-option:focus {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.ctrl-alt-del-power-option-box {
+    spacing: 12px;
+    padding: 0;
+    margin: 0;
+}
+
+.ctrl-alt-del-power-option-icon {
+    icon-size: 20px;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.ctrl-alt-del-power-option-label {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.ctrl-alt-del-power-option:hover .ctrl-alt-del-power-option-icon,
+.ctrl-alt-del-power-option:hover .ctrl-alt-del-power-option-label {
+    color: rgba(210, 210, 210, 0.95) !important;
 }
 
