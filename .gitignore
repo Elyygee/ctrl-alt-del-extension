@@ -9,3 +9,6 @@
 # Temporary files
 *~
 
+# Documentation files
+WHY-CHANGES-BREAK.md
+
