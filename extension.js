@@ -239,6 +239,11 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 labelChild.set_x_align(isCancel ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START);
             }
             
+            // Center label vertically for Cancel button
+            if (isCancel && labelChild && labelChild.set_y_align) {
+                labelChild.set_y_align(Clutter.ActorAlign.CENTER);
+            }
+            
             // Ensure label doesn't affect button width
             if (labelChild && labelChild.set_x_expand) {
                 labelChild.set_x_expand(false);
@@ -447,6 +452,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         let powerBox = new St.BoxLayout({
             vertical: false, // Horizontal for just the button
             style_class: 'ctrl-alt-del-power-box',
+            reactive: false, // Don't intercept hover events - let them reach the button
         });
         powerBox.set_x_expand(false);
         powerBox.set_y_expand(false);
@@ -484,8 +490,21 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 return;
             }
             this._powerMenuContainer.hide();
+            // Only grab focus on power button if keyboard was used
+            // If mouse was used, clear focus to remove white border
             if (powerButton) {
-                powerButton.grab_key_focus();
+                if (this._usingKeyboard) {
+                    powerButton.grab_key_focus();
+                } else {
+                    // Clear focus when menu closes if mouse was used
+                    if (global.stage) {
+                        global.stage.set_key_focus(null);
+                    }
+                }
+                // Restore hover state if mouse is still over button
+                if (isHovering) {
+                    applyHoverStyle();
+                }
             }
         };
 
@@ -717,6 +736,10 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 if (parent) {
                     parent.set_child_above_sibling(this._powerMenuContainer, null);
                 }
+                // Remove hover highlight when power menu opens
+                if (powerButton && isHovering) {
+                    removeHoverStyle();
+                }
                 this._updatePowerMenuPosition();
                 GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
                     if (this._powerMenuContainer && this._powerMenuContainer.visible) {
@@ -741,11 +764,18 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             reactive: true,
             track_hover: true,
         });
+        
         let powerIcon = new St.Icon({
             icon_name: 'system-shutdown-symbolic',
             style_class: 'ctrl-alt-del-power-icon',
         });
+        powerIcon.set_reactive(false); // Don't block hover events
+        powerIcon.set_style('pointer-events: none !important;'); // Ensure icon doesn't block hover
         powerButton.set_child(powerIcon);
+        
+        // Background color is now handled entirely by CSS (:hover, :active, :focus states)
+        // No JavaScript background manipulation needed - CSS handles it all
+        
         powerButton.set_x_expand(false); // Don't expand - use explicit size
         powerButton.set_y_expand(false); // Don't expand - use explicit size
         powerButton.set_x_align(Clutter.ActorAlign.CENTER); // Center in container
@@ -756,6 +786,10 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         powerButton.set_width(powerButtonSize);
         powerButton.set_height(powerButtonSize);
         
+        // Ensure the button clips its background to the rounded corners
+        // CSS overflow: hidden should handle this, but we also set clip-to-allocation as a backup
+        powerButton.set_clip_to_allocation(true);
+        
         powerBox.add_child(powerButton);
         powerBox.show();
         powerButton.show();
@@ -764,6 +798,212 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         this._buttonCanvas = buttonCanvas;
         this._positionUpdateId = null;
         this._sizeUpdateId = null;
+
+        // Add hover event handlers to ensure CSS works even when button doesn't have focus
+        // This fixes the issue where hover styles don't work when button is not selected with arrow keys
+        // Use inline CSS styles via set_style() to respect border-radius while bypassing CSS !important
+        let isHovering = false;
+        let isClicking = false;
+        let baseBackgroundStyle = 'background-color: rgba(0, 0, 0, 0.85) !important;';
+        let hoverBackgroundStyle = 'background-color: rgba(200, 200, 200, 0.2) !important;'; // More transparent hover
+        let clickBackgroundStyle = 'background-color: rgba(200, 200, 200, 0.5) !important;'; // Brighter on click
+        
+        // Set initial background color
+        powerButton.set_style(baseBackgroundStyle);
+        
+        const applyHoverStyle = () => {
+            if (powerButton) {
+                // Don't apply hover if power menu is open or if clicking
+                if (this._powerMenuContainer && this._powerMenuContainer.visible) {
+                    return;
+                }
+                if (isClicking) {
+                    return; // Don't apply hover while clicking
+                }
+                let currentFocus = global.stage ? global.stage.get_key_focus() : null;
+                // Only apply JavaScript hover styles if button doesn't have focus
+                // If it has focus, let CSS :hover handle it
+                if (currentFocus !== powerButton) {
+                    // Use inline CSS style to set background-color (respects border-radius)
+                    // Inline styles with !important override CSS
+                    let currentStyle = powerButton.get_style() || '';
+                    // Remove any existing background-color
+                    currentStyle = currentStyle.replace(/background-color\s*:[^;]+;?/gi, '');
+                    // Add hover background with lower opacity (more transparent)
+                    powerButton.set_style(currentStyle + ' ' + hoverBackgroundStyle);
+                    // Keep icon at full opacity by ensuring button opacity stays at 255
+                    powerButton.set_opacity(255); // Keep button at full opacity so icon stays bright
+                    // Force a redraw to ensure the style is applied
+                    if (powerButton.get_parent()) {
+                        powerButton.get_parent().queue_redraw();
+                    }
+                }
+            }
+        };
+        
+        const removeHoverStyle = () => {
+            if (powerButton) {
+                // Don't remove hover if clicking (click style takes precedence)
+                if (isClicking) {
+                    return;
+                }
+                let currentFocus = global.stage ? global.stage.get_key_focus() : null;
+                // Only remove JavaScript hover styles if button doesn't have focus
+                if (currentFocus !== powerButton) {
+                    // Use inline CSS style to restore base background
+                    let currentStyle = powerButton.get_style() || '';
+                    // Remove any existing background-color
+                    currentStyle = currentStyle.replace(/background-color\s*:[^;]+;?/gi, '');
+                    // Add base background
+                    powerButton.set_style(currentStyle + ' ' + baseBackgroundStyle);
+                    // Keep button at full opacity
+                    powerButton.set_opacity(255); // Full opacity
+                    // Force a redraw to ensure the style is applied
+                    if (powerButton.get_parent()) {
+                        powerButton.get_parent().queue_redraw();
+                    }
+                }
+            }
+        };
+        
+        const applyClickStyle = () => {
+            if (powerButton) {
+                let currentFocus = global.stage ? global.stage.get_key_focus() : null;
+                // Only apply JavaScript click styles if button doesn't have focus
+                if (currentFocus !== powerButton) {
+                    let currentStyle = powerButton.get_style() || '';
+                    // Remove any existing background-color
+                    currentStyle = currentStyle.replace(/background-color\s*:[^;]+;?/gi, '');
+                    // Add click background (brighter)
+                    powerButton.set_style(currentStyle + ' ' + clickBackgroundStyle);
+                    // Keep button at full opacity
+                    powerButton.set_opacity(255);
+                    // Force a redraw
+                    if (powerButton.get_parent()) {
+                        powerButton.get_parent().queue_redraw();
+                    }
+                }
+            }
+        };
+        
+        const removeClickStyle = () => {
+            if (powerButton) {
+                let currentFocus = global.stage ? global.stage.get_key_focus() : null;
+                // Only remove JavaScript click styles if button doesn't have focus
+                if (currentFocus !== powerButton) {
+                    let currentStyle = powerButton.get_style() || '';
+                    // Remove any existing background-color
+                    currentStyle = currentStyle.replace(/background-color\s*:[^;]+;?/gi, '');
+                    // Restore hover or base background based on hover state
+                    if (isHovering) {
+                        powerButton.set_style(currentStyle + ' ' + hoverBackgroundStyle);
+                    } else {
+                        powerButton.set_style(currentStyle + ' ' + baseBackgroundStyle);
+                    }
+                    // Keep button at full opacity
+                    powerButton.set_opacity(255);
+                    // Force a redraw
+                    if (powerButton.get_parent()) {
+                        powerButton.get_parent().queue_redraw();
+                    }
+                }
+            }
+        };
+        
+        // Track mouse position to detect hover
+        let checkHoverState = () => {
+            if (!powerButton || powerButton.is_destroyed()) {
+                return;
+            }
+            // Don't apply hover if power menu is open
+            if (this._powerMenuContainer && this._powerMenuContainer.visible) {
+                if (isHovering) {
+                    isHovering = false;
+                    removeHoverStyle();
+                }
+                return;
+            }
+            let [pointerX, pointerY] = global.get_pointer();
+            let [buttonX, buttonY] = powerButton.get_transformed_position();
+            let [buttonWidth, buttonHeight] = powerButton.get_size();
+            
+            let isOverButton = (
+                pointerX >= buttonX &&
+                pointerX <= buttonX + buttonWidth &&
+                pointerY >= buttonY &&
+                pointerY <= buttonY + buttonHeight
+            );
+            
+            if (isOverButton && !isHovering) {
+                isHovering = true;
+                applyHoverStyle();
+            } else if (!isOverButton && isHovering) {
+                isHovering = false;
+                removeHoverStyle();
+            }
+        };
+        
+        powerButton.connect('enter-event', (actor, event) => {
+            if (!isHovering) {
+                isHovering = true;
+                applyHoverStyle();
+            }
+            return false; // Don't consume event
+        });
+        
+        powerButton.connect('leave-event', (actor, event) => {
+            if (isHovering) {
+                isHovering = false;
+                removeHoverStyle();
+            }
+            return false; // Don't consume event
+        });
+        
+        powerButton.connect('motion-event', (actor, event) => {
+            checkHoverState();
+            return false; // Don't consume event
+        });
+        
+        // Also poll to check hover state as a fallback
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+            if (!powerButton || powerButton.is_destroyed()) {
+                return false; // Stop polling if button is destroyed
+            }
+            checkHoverState();
+            return true; // Continue polling
+        });
+        
+        // Monitor focus changes to switch between JavaScript and CSS hover styles
+        // When button gets focus, let CSS handle hover; when it loses focus, use JavaScript
+        let lastFocusState = false;
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            if (!powerButton || powerButton.is_destroyed()) {
+                return false; // Stop polling if button is destroyed
+            }
+            let currentFocus = global.stage ? global.stage.get_key_focus() : null;
+            let hasFocus = (currentFocus === powerButton);
+            
+            if (hasFocus !== lastFocusState) {
+                lastFocusState = hasFocus;
+                if (hasFocus) {
+                    // Button gained focus - clear inline styles, let CSS :hover:focus handle it
+                    // CSS will apply :focus and :hover:focus styles with proper border-radius
+                    let currentStyle = powerButton.get_style() || '';
+                    // Remove background-color from inline styles
+                    currentStyle = currentStyle.replace(/background-color\s*:[^;]+;?/gi, '');
+                    powerButton.set_style(currentStyle);
+                } else {
+                    // Button lost focus - reapply JavaScript hover style if hovering
+                    if (isHovering) {
+                        applyHoverStyle();
+                    } else {
+                        // Restore base background
+                        removeHoverStyle();
+                    }
+                }
+            }
+            return true; // Continue polling
+        });
 
         const togglePowerMenu = (initialIndex = null) => {
             if (this._powerMenuContainer && this._powerMenuContainer.visible) {
@@ -781,9 +1021,17 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             let wantsFocusTransition = focusActor === powerButton;
             // Remove focus when clicked with mouse (not keyboard)
             if (!this._usingKeyboard) {
+                // Remove focus from stage first
                 if (global.stage) {
                     global.stage.set_key_focus(null);
                 }
+                // Use idle_add to ensure focus is cleared after any pending operations
+                GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    if (global.stage) {
+                        global.stage.set_key_focus(null);
+                    }
+                    return GLib.SOURCE_REMOVE;
+                });
                 // Don't set focus on first button when opened with mouse
                 togglePowerMenu(null);
             } else {
@@ -793,8 +1041,32 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         });
         
         // Reset keyboard flag when mouse is used on power button
-        powerButton.connect('button-press-event', () => {
+        // Also prevent focus from being set on mouse click
+        // Decrease opacity on click for visual feedback
+        powerButton.connect('button-press-event', (actor, event) => {
             this._usingKeyboard = false;
+            // If this is a mouse click (not keyboard), prevent focus immediately
+            if (global.stage) {
+                let currentFocus = global.stage.get_key_focus();
+                // If power button currently has focus, remove it immediately
+                if (currentFocus === powerButton) {
+                    global.stage.set_key_focus(null);
+                }
+            }
+            // Apply brighter background on click
+            isClicking = true;
+            if (powerButton) {
+                applyClickStyle();
+            }
+            return false;
+        });
+        
+        // Remove click style when button is released
+        powerButton.connect('button-release-event', (actor, event) => {
+            isClicking = false;
+            if (powerButton) {
+                removeClickStyle();
+            }
             return false;
         });
 

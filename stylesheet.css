@@ -129,8 +129,8 @@
     flex-shrink: 0 !important; /* Don't shrink based on content */
     flex-grow: 1 !important; /* Grow to fill available space */
     min-height: 60px; /* Base value */
-    padding-top: 4px; /* Base value - half of 8px */
-    padding-bottom: 4px; /* Base value - half of 8px */
+    padding-top: none; /* Base value - half of 8px */
+    padding-bottom: none; /* Base value - half of 8px */
     padding-left: 16px; /* Base value */
     padding-right: 16px; /* Base value */
     color: rgba(255, 255, 255, 0.9);
@@ -279,7 +279,7 @@
     max-width: none !important; /* Allow JavaScript to set width */
     flex-shrink: 0 !important; /* Don't shrink based on content */
     flex-grow: 0 !important; /* Don't grow, use fixed width */
-    min-height: 32px; /* Base value */
+    min-height: 24px; /* Base value - reduced from 32px */
     padding-top: 6px; /* Base value */
     padding-bottom: 6px; /* Base value */
     border-radius: 8px !important;
@@ -303,6 +303,18 @@
     border: 1px solid rgba(255, 255, 255, 1) !important; /* 100% opaque white border when both hovered and focused */
 }
 
+/* Cancel button click/active - lighter background highlight */
+.ctrl-alt-del-button.cancel-button:active {
+    background-color: rgba(200, 200, 200, 0.5) !important; /* Lighter highlight on click */
+    border: 1px solid rgba(255, 255, 255, 0.5) !important; /* Keep border on click */
+}
+
+/* Cancel button active + focus - lighter background with white border */
+.ctrl-alt-del-button.cancel-button:active:focus {
+    background-color: rgba(200, 200, 200, 0.5) !important; /* Lighter highlight on click */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* 100% opaque white border when active and focused */
+}
+
 /* Center the label text inside Cancel button */
 .ctrl-alt-del-button.cancel-button St.Label {
     text-align: center;
@@ -310,6 +322,7 @@
     min-width: 0 !important; /* Don't constrain based on text */
     max-width: 100% !important; /* Don't exceed button width */
     overflow: hidden !important; /* Hide overflow text if any */
+    vertical-align: middle !important; /* Center vertically */
 }
 
 .ctrl-alt-del-power-box {
@@ -325,6 +338,7 @@
     overflow: hidden !important; /* Clip button to container */
     /* DEBUG: border: 3px solid purple !important; */
     box-sizing: border-box !important; /* Include border in size calculation */
+    pointer-events: none !important; /* Don't intercept hover events - let them pass to button */
 }
 
 .ctrl-alt-del-power-button {
@@ -333,34 +347,60 @@
     min-width: 48px !important; /* Prevent shrinking below base */
     min-height: 48px !important; /* Prevent shrinking below base */
     /* No max constraints - JavaScript controls exact size to keep it square */
-    border-radius: 8px;
-    background-color: rgba(0, 0, 0, 0.85);
+    border-radius: 8px !important; /* Rounded corners for the button */
+    /* background-color: managed by JavaScript when not focused, CSS when focused */
+    background-color: rgba(0, 0, 0, 0.85); /* Base background color - no !important to allow JavaScript override */
+    background-gradient-start: transparent !important;
+    background-gradient-end: transparent !important;
     border: 1px solid transparent !important; /* Transparent border by default - allows focus border to show */
     padding: 0 !important;
     margin: 0 !important; /* No margin */
     box-shadow: none !important;
     box-sizing: border-box !important; /* Ensure borders/padding don't affect size */
     transition: background-color 150ms ease, border-color 150ms ease;
+    overflow: hidden !important; /* Clip background color to border-radius */
+    pointer-events: auto !important; /* Ensure hover events work */
 }
 
-.ctrl-alt-del-power-button:hover:not(:focus) {
-    background-color: rgba(255, 255, 255, 0.1) !important; /* Background highlight only on mouse hover (not keyboard focus) */
-    border: 1px solid transparent !important; /* No visible border on hover when not focused */
-    box-shadow: none !important;
+/* Power button hover - light gray background on mouse hover (applies regardless of focus state) */
+.ctrl-alt-del-power-button:hover,
+.ctrl-alt-del-power-button.power-button-hover {
+    background-color: rgba(200, 200, 200, 0.3) !important; /* Light gray 30% transparent on mouse hover */
+    background-gradient-start: transparent !important;
+    background-gradient-end: transparent !important;
 }
 
-/* Keyboard focus - white border only, no background highlight */
+/* Keyboard focus - white border only, no background highlight (overrides hover background when not hovering) */
 .ctrl-alt-del-power-button:focus,
 .ctrl-alt-del-power-button:focus-visible {
     background-color: rgba(0, 0, 0, 0.85) !important; /* Keep base background, no highlight on keyboard focus */
-    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border on keyboard focus */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border on keyboard focus - rounded corners from border-radius */
+    border-radius: 8px !important; /* Rounded corners for border */
     box-shadow: none !important; /* No box-shadow, use border instead */
     outline: none !important; /* Remove any outline */
 }
 
-.ctrl-alt-del-power-button:hover:focus {
-    background-color: rgba(255, 255, 255, 0.1) !important; /* Show background highlight only when mouse is hovering */
-    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border */
+/* Power button hover + focus - show hover background with white border (hover takes precedence over focus background) */
+.ctrl-alt-del-power-button:hover:focus,
+.ctrl-alt-del-power-button.power-button-hover:focus {
+    background-color: rgba(200, 200, 200, 0.3) !important; /* Show hover background when mouse is hovering */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border - rounded corners from border-radius */
+    border-radius: 8px !important; /* Rounded corners */
+    box-shadow: none !important;
+}
+
+/* Power button click/active - lighter background highlight */
+.ctrl-alt-del-power-button:active {
+    background-color: rgba(200, 200, 200, 0.5) !important; /* Lighter highlight on click */
+    background-gradient-start: transparent !important;
+    background-gradient-end: transparent !important;
+}
+
+/* Power button active + focus - show click highlight with white border */
+.ctrl-alt-del-power-button:active:focus {
+    background-color: rgba(200, 200, 200, 0.5) !important; /* Show click highlight when active and focused */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border - rounded corners from border-radius */
+    border-radius: 8px !important; /* Rounded corners */
     box-shadow: none !important;
 }
 
@@ -368,6 +408,7 @@
 .ctrl-alt-del-power-icon {
     icon-size: 26px;
     color: rgba(255, 255, 255, 0.9);
+    pointer-events: none !important; /* Don't block hover events on parent button */
 }
 
 .ctrl-alt-del-power-menu {
