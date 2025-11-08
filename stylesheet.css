@@ -1,4 +1,10 @@
-/* DEBUG BORDERS - Each box has a different color for identification:
+/* SCALING SYSTEM:
+ * All pixel values in this CSS are base values for 1920x1080 resolution.
+ * The extension automatically scales all sizes, spacing, padding, and margins
+ * based on the monitor resolution to ensure uniform experience across
+ * 1080p, 1440p, 4K, 8K, and other resolutions.
+ * 
+ * DEBUG BORDERS - Each box has a different color for identification:
  * Red: .ctrl-alt-del-dialog (main dialog actor)
  * Orange: .modal-dialog (modal dialog container)
  * Yellow: .modal-dialog-content-box (content box)
@@ -14,7 +20,7 @@
 .ctrl-alt-del-dialog {
     background-color: transparent !important;
     border-radius: 0 !important;
-    border: 3px solid red !important;
+    /* DEBUG: border: 3px solid red !important; */
     box-shadow: none !important;
     padding: 0 !important;
     margin: 0 !important;
@@ -38,7 +44,7 @@
     min-height: 100% !important;
     max-width: 100% !important;
     max-height: 100% !important;
-    border: 3px solid orange !important;
+    /* DEBUG: border: 3px solid orange !important; */
     background-color: transparent !important;
     padding: 0 !important;
     margin: 0 !important;
@@ -53,7 +59,7 @@
     max-height: 100% !important;
     padding: 0 !important;
     margin: 0 !important;
-    border: 3px solid yellow !important;
+    /* DEBUG: border: 3px solid yellow !important; */
     background-color: transparent !important;
     /* Force containment - prevent overflow beyond parent */
     overflow: hidden !important;
@@ -65,7 +71,8 @@
     margin-left: 0;
     background-color: transparent !important;
     border-radius: 0 !important;
-    border: 3px solid green !important;
+    /* DEBUG: border: 3px solid green !important; */
+    overflow: visible !important; /* Allow cancel button to overflow */
 }
 
 .ctrl-alt-del-power-content {
@@ -82,58 +89,69 @@
     spacing: 8px;
     margin-left: 0;
     margin-right: auto;
-    max-width: 200px;
-    width: 200px;
+    max-width: 10.83% !important; /* ~208px at 1920px width, scales with resolution - 1.2x smaller than 13% */
+    width: 10.83% !important;
+    min-width: 10.83% !important;
     background-color: rgb(0, 0, 0) !important;
-    padding: 16px;
+    padding: 16px; /* Base value, will be close across resolutions */
     border-radius: 4px !important;
-    border: 3px solid blue !important;
+    /* DEBUG: border: 3px solid blue !important; */
+    box-sizing: border-box !important; /* Include border in width */
+    overflow: visible !important; /* Allow cancel button to overflow */
 }
 
 .ctrl-alt-del-power-buttons {
     spacing: 2px;
     margin-left: 0;
     margin-right: auto;
-    max-width: 220px;
-    width: 220px;
+    max-width: 11.5% !important; /* ~220px at 1920px width, scales with resolution */
+    width: 11.5% !important;
+    min-width: 11.5% !important;
     background-color: rgba(40, 40, 40, 0.98) !important; /* Dark gray */
-    padding: 8px;
+    padding: 8px; /* Base value, will be close across resolutions */
     border-radius: 8px !important;
     border: 1px solid rgba(255, 255, 255, 0.1) !important;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    box-sizing: border-box !important; /* Include border in width */
 }
 
 /* Button font size and text alignment */
 .ctrl-alt-del-button {
-    font-size: 16pt;
+    font-size: 16pt; /* pt scales with system DPI */
     text-align: left;
     background-color: transparent;
     border: 1px solid transparent !important;
     box-shadow: none;
-    width: 250px;
-    min-width: 250px;
-    max-width: 250px;
-    min-height: 60px;
-    padding-top: 8px;
-    padding-bottom: 8px;
-    padding-left: 16px;
-    padding-right: 16px;
+    box-sizing: border-box !important; /* Include border in width calculation */
+    width: 100% !important; /* Fill container width */
+    min-width: 100% !important;
+    max-width: 100% !important;
+    flex-shrink: 0 !important; /* Don't shrink based on content */
+    flex-grow: 1 !important; /* Grow to fill available space */
+    min-height: 60px; /* Base value */
+    padding-top: 8px; /* Base value */
+    padding-bottom: 8px; /* Base value */
+    padding-left: 16px; /* Base value */
+    padding-right: 16px; /* Base value */
     color: rgba(255, 255, 255, 0.9);
 }
 
 .ctrl-alt-del-power-option-button {
-    font-size: 14pt;
+    font-size: 14pt; /* pt scales with system DPI */
     text-align: left;
     background-color: transparent;
     border: 1px solid transparent !important;
     box-shadow: none;
-    width: 204px;
-    min-width: 204px;
-    max-width: 204px;
-    min-height: 44px;
+    box-sizing: border-box !important; /* Include border in width calculation */
+    width: 100% !important; /* Fill container width */
+    min-width: 100% !important;
+    max-width: 100% !important;
+    flex-shrink: 0 !important; /* Don't shrink based on content */
+    flex-grow: 1 !important; /* Grow to fill available space */
+    min-height: 44px; /* Base value */
     padding: 0;
-    padding-left: 12px;
-    padding-right: 12px;
+    padding-left: 12px; /* Base value */
+    padding-right: 12px; /* Base value */
     color: rgba(255, 255, 255, 0.9);
     border-radius: 4px !important;
     transition: background-color 150ms ease, border-color 150ms ease;
@@ -143,18 +161,31 @@
     background-color: rgba(255, 255, 255, 0.1) !important; /* 10% transparent light gray on hover */
 }
 
+/* Power option button: keyboard focus - only border, no background */
 .ctrl-alt-del-power-option-button:focus {
     border: 1px solid rgba(255, 255, 255, 1) !important; /* White border on focus (keyboard) */
-    background-color: transparent !important;
+    background-color: transparent !important; /* No background on keyboard focus */
+    width: 100% !important; /* Ensure full width for border */
+    min-width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important; /* Border included in width */
 }
 
+/* Power option button: mouse hover + keyboard focus - show background only when hovered */
 .ctrl-alt-del-power-option-button:hover:focus {
     border: 1px solid rgba(255, 255, 255, 1) !important; /* White border takes precedence */
-    background-color: rgba(255, 255, 255, 0.1) !important; /* Keep hover background */
+    background-color: rgba(255, 255, 255, 0.1) !important; /* Background only when mouse is hovering */
+    width: 100% !important; /* Ensure full width for border */
+    min-width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important; /* Border included in width */
 }
 
 .ctrl-alt-del-power-buttons .ctrl-alt-del-power-option-button St.Label {
     text-align: left;
+    width: auto !important; /* Let label size to content, don't affect button width */
+    min-width: 0 !important;
+    max-width: none !important;
 }
 
 .ctrl-alt-del-power-option-box {
@@ -184,9 +215,23 @@
 
 /* White stroke when button is focused (keyboard navigation) */
 /* Must use !important to override the universal selector */
+/* No background highlight on keyboard focus - only border */
 .ctrl-alt-del-button:focus,
 .ctrl-alt-del-button:focus-visible {
     border: 1px solid rgba(255, 255, 255, 0.8) !important;
+    background-color: transparent !important; /* No background on keyboard focus */
+    outline: none !important;
+    width: 100% !important; /* Ensure full width for border */
+    min-width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important; /* Border included in width */
+}
+
+/* Cancel button focus - keep original background, 100% opaque white border */
+.ctrl-alt-del-button.cancel-button:focus,
+.ctrl-alt-del-button.cancel-button:focus-visible {
+    background-color: rgb(40, 40, 40) !important; /* Keep original background */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* 100% opaque white border on keyboard focus */
     outline: none !important;
 }
 
@@ -195,64 +240,130 @@
     text-align: left;
     padding-left: 0;
     margin-left: 0;
+    margin-right: 0;
+    padding-right: 0;
     color: inherit !important;
+    width: auto !important; /* Let label size to content, don't affect button width */
+    min-width: 0 !important;
+    max-width: none !important;
 }
 
-.ctrl-alt-del-button:hover,
+/* No background highlight on main buttons - only power menu buttons get hover background */
+.ctrl-alt-del-button:hover {
+    background-color: transparent !important; /* No background highlight for main buttons */
+    color: rgba(210, 210, 210, 0.95) !important;
+}
+
 .ctrl-alt-del-button:hover St.Label {
     color: rgba(210, 210, 210, 0.95) !important;
 }
 
+/* No background highlight when main button is both hovered and focused */
+.ctrl-alt-del-button:hover:focus {
+    background-color: transparent !important; /* No background highlight for main buttons */
+    border: 1px solid rgba(255, 255, 255, 0.8) !important; /* Keep border */
+    width: 100% !important; /* Ensure full width for border */
+    min-width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important; /* Border included in width */
+}
+
 /* Cancel button - smaller hitbox and rounded corners */
+/* Width is set in JavaScript based on screen width, not parent container */
 .ctrl-alt-del-button.cancel-button {
-    margin-top: 24px; /* Increased to maintain same gap above Cancel (8px spacing + 24px margin = 32px total, same as before) */
-    width: 150px;
-    min-width: 150px;
-    max-width: 150px;
-    min-height: 32px;
-    padding-top: 6px;
-    padding-bottom: 6px;
+    margin-top: 24px; /* Base value */
+    margin-left: 10% !important; /* 10% padding from left side of bounding box */
+    margin-right: 10% !important; /* 10% padding from right side of bounding box */
+    /* Width set in JavaScript - don't use percentage here as it's relative to parent */
+    min-width: 0 !important; /* Don't constrain based on content */
+    max-width: none !important; /* Allow JavaScript to set width */
+    flex-shrink: 0 !important; /* Don't shrink based on content */
+    flex-grow: 0 !important; /* Don't grow, use fixed width */
+    min-height: 32px; /* Base value */
+    padding-top: 6px; /* Base value */
+    padding-bottom: 6px; /* Base value */
     border-radius: 8px !important;
-    background-color: rgb(40, 40, 40) !important;
+    background-color: rgb(40, 40, 40) !important; /* Grey background */
+    border: 1px solid transparent !important; /* Transparent border by default - allows hover/focus borders to show */
     text-align: center;
+    box-sizing: border-box !important; /* Include border in width calculation */
+    position: relative !important; /* Allow positioning */
+    overflow: visible !important; /* Allow overflow if needed */
+}
+
+/* Cancel button hover - keep original background, 50% transparent white border */
+.ctrl-alt-del-button.cancel-button:hover {
+    background-color: rgb(40, 40, 40) !important; /* Keep original background */
+    border: 1px solid rgba(255, 255, 255, 0.5) !important; /* 50% transparent white border on mouse hover */
+}
+
+/* Cancel button hover + focus - 100% opaque white border takes precedence */
+.ctrl-alt-del-button.cancel-button:hover:focus {
+    background-color: rgb(40, 40, 40) !important; /* Keep original background */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* 100% opaque white border when both hovered and focused */
 }
 
 /* Center the label text inside Cancel button */
 .ctrl-alt-del-button.cancel-button St.Label {
     text-align: center;
+    width: 100% !important; /* Fill button width */
+    min-width: 0 !important; /* Don't constrain based on text */
+    max-width: 100% !important; /* Don't exceed button width */
+    overflow: hidden !important; /* Hide overflow text if any */
 }
 
 .ctrl-alt-del-power-box {
-    spacing: 8px;
+    spacing: 0; /* No spacing needed for single button */
     padding: 0;
     margin: 0;
-    /* Ensure power box stays within dialog boundaries */
-    max-width: 100%;
-    max-height: 100%;
-    overflow: hidden;
-    border: 3px solid purple !important;
+    /* Ensure power box stays square - JavaScript controls exact size */
+    width: 48px; /* Base size - JavaScript will override with scaled value */
+    height: 48px; /* Base size - JavaScript will override with scaled value */
+    min-width: 48px !important; /* Prevent shrinking below base size */
+    min-height: 48px !important; /* Prevent shrinking below base size */
+    /* No max constraints - JavaScript controls exact size to keep it square */
+    overflow: hidden !important; /* Clip button to container */
+    /* DEBUG: border: 3px solid purple !important; */
+    box-sizing: border-box !important; /* Include border in size calculation */
 }
 
 .ctrl-alt-del-power-button {
-    width: 48px;
-    height: 48px;
+    width: 48px; /* Base size - JavaScript will override with scaled value */
+    height: 48px; /* Base size - JavaScript will override with scaled value */
+    min-width: 48px !important; /* Prevent shrinking below base */
+    min-height: 48px !important; /* Prevent shrinking below base */
+    /* No max constraints - JavaScript controls exact size to keep it square */
     border-radius: 8px;
     background-color: rgba(0, 0, 0, 0.85);
-    border: none !important;
+    border: 1px solid transparent !important; /* Transparent border by default - allows focus border to show */
     padding: 0 !important;
+    margin: 0 !important; /* No margin */
     box-shadow: none !important;
-    transition: background-color 150ms ease, box-shadow 150ms ease;
+    box-sizing: border-box !important; /* Ensure borders/padding don't affect size */
+    transition: background-color 150ms ease, border-color 150ms ease;
 }
 
-.ctrl-alt-del-power-button:hover {
-    background-color: rgba(255, 255, 255, 0.1);
+.ctrl-alt-del-power-button:hover:not(:focus) {
+    background-color: rgba(255, 255, 255, 0.1) !important; /* Background highlight only on mouse hover (not keyboard focus) */
+    border: 1px solid transparent !important; /* No visible border on hover when not focused */
     box-shadow: none !important;
 }
 
-.ctrl-alt-del-power-button:focus {
-    background-color: rgba(0, 0, 0, 0.85);
-    box-shadow: 0 0 0 1px rgba(200, 200, 200, 0.5) !important;
+/* Keyboard focus - white border only, no background highlight */
+.ctrl-alt-del-power-button:focus,
+.ctrl-alt-del-power-button:focus-visible {
+    background-color: rgba(0, 0, 0, 0.85) !important; /* Keep base background, no highlight on keyboard focus */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border on keyboard focus */
+    box-shadow: none !important; /* No box-shadow, use border instead */
+    outline: none !important; /* Remove any outline */
 }
+
+.ctrl-alt-del-power-button:hover:focus {
+    background-color: rgba(255, 255, 255, 0.1) !important; /* Show background highlight only when mouse is hovering */
+    border: 1px solid rgba(255, 255, 255, 1) !important; /* White border */
+    box-shadow: none !important;
+}
+
 
 .ctrl-alt-del-power-icon {
     icon-size: 26px;
@@ -264,7 +375,7 @@
     margin-bottom: 12px;
     background-color: rgba(20, 20, 20, 0.92);
     border-radius: 16px;
-    border: 3px solid pink !important;
+    /* DEBUG: border: 3px solid pink !important; */
     padding: 12px 16px;
     min-width: 200px;
     width: auto;

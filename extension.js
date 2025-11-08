@@ -22,6 +22,58 @@ let _testLogFile = null;
 const TEST_LOG_PATH = GLib.build_filenamev([GLib.get_home_dir(), '.ctrl-alt-del-test-log']);
 const TEST_COMMAND_PATH = GLib.build_filenamev([GLib.get_home_dir(), '.ctrl-alt-del-command.json']);
 
+// Scaling system for different monitor resolutions
+// Base resolution: 1920x1080 (Full HD)
+const BASE_WIDTH = 1920;
+const BASE_HEIGHT = 1080;
+
+function _getScaleFactor() {
+    try {
+        const display = global.display;
+        const primaryMonitor = display.get_primary_monitor();
+        const geometry = display.get_monitor_geometry(primaryMonitor);
+        
+        // Use the smaller dimension to maintain aspect ratio
+        const widthScale = geometry.width / BASE_WIDTH;
+        const heightScale = geometry.height / BASE_HEIGHT;
+        
+        // Use average scale for balanced scaling, or minimum for conservative scaling
+        // Using average provides better scaling across different aspect ratios
+        const scale = (widthScale + heightScale) / 2;
+        
+        // Clamp scale to reasonable bounds (0.5x to 3x)
+        return Math.max(0.5, Math.min(3.0, scale));
+    } catch (e) {
+        global.log('Ctrl+Alt+Del: Error calculating scale factor: ' + e);
+        return 1.0; // Fallback to no scaling
+    }
+}
+
+function _scale(value) {
+    return Math.round(value * _getScaleFactor());
+}
+
+// Apply scaled CSS styles to an element
+function _applyScaledStyle(element, styles) {
+    if (!element || !styles) return;
+    
+    let css = '';
+    
+    for (let property in styles) {
+        let value = styles[property];
+        if (typeof value === 'number') {
+            // Value is already scaled, just add px
+            css += `${property}: ${value}px !important; `;
+        } else {
+            css += `${property}: ${value} !important; `;
+        }
+    }
+    
+    if (css) {
+        element.set_style(css);
+    }
+}
+
 function _appendTestLog(message) {
     try {
         if (!_testLogFile) {
@@ -89,11 +141,22 @@ function _createBlackOverlays(parentGroup) {
             y: g.y,
             width: g.width,
             height: g.height,
-            reactive: false
+            reactive: true // Make reactive to receive click events
         });
         
         // Keep a solid black fill regardless of CSS
         overlay.set_background_color(new Clutter.Color({ red: 0, green: 0, blue: 0, alpha: 255 }));
+        
+        // Add click handler to close power menu if visible
+        overlay.connect('button-press-event', () => {
+            if (_ctrlAltDelDialog && _ctrlAltDelDialog._powerMenuContainer && _ctrlAltDelDialog._powerMenuContainer.visible) {
+                if (_ctrlAltDelDialog._hidePowerMenu) {
+                    _ctrlAltDelDialog._hidePowerMenu();
+                }
+            }
+            return false; // Don't consume event, let it propagate
+        });
+        
         target.add_child(overlay);
         overlay.set_opacity(255);
         overlay.show();
@@ -202,11 +265,23 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         buttonColumn.set_x_align(Clutter.ActorAlign.START);
         buttonColumn.set_y_align(Clutter.ActorAlign.START);
         buttonContainer.add_child(buttonColumn);
+        this._buttonColumn = buttonColumn; // Store reference for button width calculations
 
         this._buttonList = [];
-        this._anchorMargin = 16; // Reduced margin to bring power button closer to bottom-right corner
+        // Use height-based scaling for anchor margin to prevent stretching on ultra-wide monitors
+        try {
+            const display = global.display;
+            const primaryMonitor = display.get_primary_monitor();
+            const geometry = display.get_monitor_geometry(primaryMonitor);
+            const heightScale = geometry.height / BASE_HEIGHT;
+            this._anchorMargin = Math.round(16 * heightScale);
+        } catch (e) {
+            this._anchorMargin = 16; // Fallback
+        }
         this._usingKeyboard = false; // Track if user is navigating with keyboard
         this._dialogId = GLib.uuid_string_random();
+        this._powerMenuWidth = null; // Store fixed width to prevent jitter
+        this._powerMenuButtonsWidth = null; // Store fixed width for inner buttons container
 
         const logDialog = (message) => {
             _appendTestLog(`[dialog ${this._dialogId}] ${message}`);
@@ -220,13 +295,20 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 style_class: style,
                 can_focus: true,
                 reactive: true,
-                x_align: isCancel ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START
+                x_align: isCancel ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START,
+                x_expand: !isCancel, // Expand to fill container width (except Cancel)
+                y_expand: false
             });
             
             // Ensure label inside button is aligned (center for Cancel, left for others)
             let labelChild = b.get_child();
             if (labelChild && labelChild.set_x_align) {
                 labelChild.set_x_align(isCancel ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START);
+            }
+            
+            // Ensure label doesn't affect button width
+            if (labelChild && labelChild.set_x_expand) {
+                labelChild.set_x_expand(false);
             }
             
             // Remove focus when clicked with mouse (not keyboard)
@@ -259,6 +341,65 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             
             buttonColumn.add_child(b);
             this._buttonList.push(b);
+            
+            // Set Cancel button width immediately after creation
+            if (isCancel) {
+                try {
+                    const display = global.display;
+                    const primaryMonitor = display.get_primary_monitor();
+                    const geometry = display.get_monitor_geometry(primaryMonitor);
+                    let cancelWidth = Math.round(geometry.width * 0.22); // 22% of screen width (slightly smaller)
+                    // Calculate 10% margin from left and right (10% of button column width, which is 10.83% of screen)
+                    let columnWidth = Math.round(geometry.width * 0.1083);
+                    let leftMargin = Math.round(columnWidth * 0.10); // 10% of column width
+                    let rightMargin = Math.round(columnWidth * 0.10); // 10% of column width
+                    b.set_width(cancelWidth);
+                    b.set_x_expand(false);
+                    b.set_x_align(Clutter.ActorAlign.START); // Align to start to allow margin
+                    _applyScaledStyle(b, {
+                        'width': cancelWidth,
+                        'min-width': cancelWidth,
+                        'max-width': cancelWidth,
+                        'margin-left': leftMargin,
+                        'margin-right': rightMargin,
+                        'flex-shrink': 0,
+                        'flex-grow': 0
+                    });
+                } catch (e) {
+                    // If geometry not available yet, will be set in _setContainerWidths
+                }
+            }
+            
+            // Force button to fill container width (except Cancel)
+            if (!isCancel) {
+                // Set button width to fill column (accounting for padding)
+                // Column padding is 16px on each side = 32px total
+                let setButtonWidth = () => {
+                    try {
+                        let [columnWidth] = buttonColumn.get_size();
+                        if (columnWidth > 0) {
+                            let buttonWidth = columnWidth - _scale(32); // Subtract padding
+                            b.set_width(buttonWidth);
+                        }
+                    } catch (e) {
+                        // Ignore errors
+                    }
+                };
+                
+                // Set width after column is sized
+                GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                    setButtonWidth();
+                    return GLib.SOURCE_REMOVE;
+                });
+                
+                // Update width when column size changes
+                let allocationId = buttonColumn.connect('notify::allocation', setButtonWidth);
+                if (!this._buttonAllocationIds) {
+                    this._buttonAllocationIds = [];
+                }
+                this._buttonAllocationIds.push(allocationId);
+            }
+            
             return b;
         };
 
@@ -339,11 +480,9 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 return !!this._powerMenuContainer.visible;
             };
         }
-        this._powerMenuAllocationId = powerMenuContainer.connect('notify::allocation', () => {
-            if (this._powerMenuContainer && this._powerMenuContainer.visible) {
-                this._updatePowerMenuPosition();
-            }
-        });
+        // Don't connect allocation signal - it causes jitter
+        // We'll update position manually when needed (on show, on dialog resize, etc.)
+        this._powerMenuAllocationId = null;
 
         let powerMenuButtons = new St.BoxLayout({
             vertical: true,
@@ -354,6 +493,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         powerMenuButtons.set_x_align(Clutter.ActorAlign.START);
         powerMenuButtons.set_y_align(Clutter.ActorAlign.START);
         powerMenuContainer.add_child(powerMenuButtons);
+        this._powerMenuButtons = powerMenuButtons; // Store reference for button width calculations
 
         // Power button box - separate from menu
         let powerBox = new St.BoxLayout({
@@ -363,6 +503,22 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         powerBox.set_x_expand(false);
         powerBox.set_y_expand(false);
         powerBox.set_x_align(Clutter.ActorAlign.END); // Right-align
+        
+        // Set power box size to match button (square)
+        // Use height-based scaling to prevent stretching on ultra-wide monitors
+        let powerButtonSize = 48; // Default fallback
+        try {
+            const display = global.display;
+            const primaryMonitor = display.get_primary_monitor();
+            const geometry = display.get_monitor_geometry(primaryMonitor);
+            const heightScale = geometry.height / BASE_HEIGHT;
+            powerButtonSize = Math.round(48 * heightScale);
+        } catch (e) {
+            // Use default fallback
+        }
+        powerBox.set_width(powerButtonSize);
+        powerBox.set_height(powerButtonSize);
+        
         // Add to buttonCanvas with FixedLayout - position will be set explicitly
         buttonCanvas.add_child(powerBox);
         this._powerBox = powerBox;
@@ -430,30 +586,46 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
 
         const addPowerOption = (label, command, iconName) => {
             // Create a box layout for icon and label
+            // Use x_expand: true to fill button width and prevent jitter
             let optionBox = new St.BoxLayout({
                 style_class: 'ctrl-alt-del-power-option-box',
                 vertical: false,
-                x_expand: false,
+                x_expand: true, // Expand to fill button width to prevent jitter
                 y_expand: false,
             });
             optionBox.set_y_align(Clutter.ActorAlign.CENTER);
+            optionBox.set_x_align(Clutter.ActorAlign.START);
             
-            // Add icon
+            // Add icon - use height-based scaling to prevent stretching on ultra-wide monitors
+            let iconSize = 20; // Base size
+            try {
+                const display = global.display;
+                const primaryMonitor = display.get_primary_monitor();
+                const geometry = display.get_monitor_geometry(primaryMonitor);
+                const heightScale = geometry.height / BASE_HEIGHT;
+                iconSize = Math.round(20 * heightScale);
+            } catch (e) {
+                // Use base size if calculation fails
+            }
             let icon = new St.Icon({
                 icon_name: iconName,
                 style_class: 'ctrl-alt-del-power-option-icon',
-                icon_size: 20,
+                icon_size: iconSize,
             });
             icon.set_y_align(Clutter.ActorAlign.CENTER);
+            icon.set_x_expand(false); // Don't expand icon
+            icon.set_x_align(Clutter.ActorAlign.START);
             optionBox.add_child(icon);
             
-            // Add label
+            // Add label - expand to fill remaining space
             let optionLabel = new St.Label({
                 text: label,
                 style_class: 'ctrl-alt-del-power-option-label',
                 x_align: Clutter.ActorAlign.START,
             });
             optionLabel.set_y_align(Clutter.ActorAlign.CENTER);
+            optionLabel.set_x_expand(true); // Expand to fill remaining space
+            optionLabel.set_x_align(Clutter.ActorAlign.START);
             optionBox.add_child(optionLabel);
             
             // Create button with the box as content
@@ -462,6 +634,8 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 can_focus: true,
                 reactive: true,
                 x_align: Clutter.ActorAlign.START,
+                x_expand: true, // Expand to fill container width
+                y_expand: false
             });
             option.set_y_align(Clutter.ActorAlign.CENTER);
             option.set_child(optionBox);
@@ -548,6 +722,35 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
 
             powerMenuButtons.add_child(option);
             powerOptionButtons.push(option);
+            
+            // Force button to fill container width
+            // Set button width to fill container (accounting for padding)
+            // Container padding is 8px on each side = 16px total
+            let setPowerButtonWidth = () => {
+                try {
+                    let [containerWidth] = powerMenuButtons.get_size();
+                    if (containerWidth > 0) {
+                        let buttonWidth = containerWidth - _scale(16); // Subtract padding
+                        option.set_width(buttonWidth);
+                    }
+                } catch (e) {
+                    // Ignore errors
+                }
+            };
+            
+            // Set width after container is sized
+            GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                setPowerButtonWidth();
+                return GLib.SOURCE_REMOVE;
+            });
+            
+            // Update width when container size changes
+            let allocationId = powerMenuButtons.connect('notify::allocation', setPowerButtonWidth);
+            if (!this._powerButtonAllocationIds) {
+                this._powerButtonAllocationIds = [];
+            }
+            this._powerButtonAllocationIds.push(allocationId);
+            
             logPowerMenuState(`addPowerOption-${label}`);
         };
 
@@ -568,6 +771,46 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                     return;
                 }
 
+                // Ensure width is set before showing to prevent jitter
+                try {
+                    let menuWidth = this._powerMenuWidth;
+                    if (!menuWidth) {
+                        // Calculate if not stored yet
+                        const display = global.display;
+                        const primaryMonitor = display.get_primary_monitor();
+                        const geometry = display.get_monitor_geometry(primaryMonitor);
+                        menuWidth = Math.round(geometry.width * 0.115);
+                        this._powerMenuWidth = menuWidth; // Store it
+                    }
+                    this._powerMenuContainer.set_width(menuWidth);
+                    // Apply width via CSS as well to ensure it's enforced
+                    _applyScaledStyle(this._powerMenuContainer, {
+                        'width': menuWidth,
+                        'min-width': menuWidth,
+                        'max-width': menuWidth
+                    });
+                    
+                    // Also enforce inner buttons container width
+                    let buttonsWidth = this._powerMenuButtonsWidth;
+                    if (!buttonsWidth) {
+                        const display = global.display;
+                        const primaryMonitor = display.get_primary_monitor();
+                        const geometry = display.get_monitor_geometry(primaryMonitor);
+                        buttonsWidth = Math.round(geometry.width * 0.115);
+                        this._powerMenuButtonsWidth = buttonsWidth; // Store it
+                    }
+                    if (this._powerMenuButtons) {
+                        this._powerMenuButtons.set_width(buttonsWidth);
+                        _applyScaledStyle(this._powerMenuButtons, {
+                            'width': buttonsWidth,
+                            'min-width': buttonsWidth,
+                            'max-width': buttonsWidth
+                        });
+                    }
+                } catch (e) {
+                    // If width setting fails, continue anyway
+                }
+                
                 this._powerMenuContainer.show();
                 this._powerMenuContainer.set_opacity(255);
                 let parent = this._powerMenuContainer.get_parent();
@@ -605,8 +848,16 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             style_class: 'ctrl-alt-del-power-icon',
         });
         powerButton.set_child(powerIcon);
-        powerButton.set_x_expand(false);
-        powerButton.set_x_align(Clutter.ActorAlign.END); // Right-align the button
+        powerButton.set_x_expand(false); // Don't expand - use explicit size
+        powerButton.set_y_expand(false); // Don't expand - use explicit size
+        powerButton.set_x_align(Clutter.ActorAlign.CENTER); // Center in container
+        powerButton.set_y_align(Clutter.ActorAlign.CENTER); // Center in container
+        
+        // Explicitly set power button to square size (same as container)
+        // This ensures it's independent and square
+        powerButton.set_width(powerButtonSize);
+        powerButton.set_height(powerButtonSize);
+        
         powerBox.add_child(powerButton);
         powerBox.show();
         powerButton.show();
@@ -684,6 +935,64 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         };
 
         this._updateAnchorPositions();
+
+        // Close power menu when clicking outside it
+        // Connect to dialog actor to catch all clicks including on black background
+        this._powerMenuClickOutsideId = this.actor.connect('button-press-event', (actor, event) => {
+            // Only handle if power menu is visible
+            if (!this._powerMenuContainer || !this._powerMenuContainer.visible) {
+                return false; // Let other handlers process the event
+            }
+
+            // Get click coordinates in stage space
+            let [stageX, stageY] = event.get_coords();
+            
+            // Transform stage coordinates to button canvas coordinates
+            let [canvasX, canvasY, ok] = buttonCanvas.transform_stage_point(stageX, stageY);
+            if (!ok) {
+                // If transformation fails, assume click is outside (close menu)
+                this._logDialog('Click outside power menu (transform failed) - closing');
+                hidePowerMenu();
+                return true;
+            }
+            
+            // Get power menu container position and size (relative to button canvas)
+            let [menuX, menuY] = this._powerMenuContainer.get_position();
+            let [menuWidth, menuHeight] = this._powerMenuContainer.get_size();
+
+            // Check if click is outside the power menu container
+            let isOutside = (
+                canvasX < menuX ||
+                canvasX > menuX + menuWidth ||
+                canvasY < menuY ||
+                canvasY > menuY + menuHeight
+            );
+
+            // Also check if click is on the power button itself (should toggle, not just close)
+            if (this._powerBox) {
+                let [boxX, boxY] = this._powerBox.get_position();
+                let [boxWidth, boxHeight] = this._powerBox.get_size();
+                let isOnPowerButton = (
+                    canvasX >= boxX &&
+                    canvasX <= boxX + boxWidth &&
+                    canvasY >= boxY &&
+                    canvasY <= boxY + boxHeight
+                );
+                if (isOnPowerButton) {
+                    // Click is on power button, let it handle the toggle
+                    return false;
+                }
+            }
+
+            // If click is outside power menu, close it
+            if (isOutside) {
+                this._logDialog('Click outside power menu - closing');
+                hidePowerMenu();
+                return true; // Consume the event
+            }
+
+            return false; // Let other handlers process the event
+        });
 
         // Keyboard navigation
         this._keyId = this.actor.connect('key-press-event', (actor, event) => {
@@ -925,24 +1234,63 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             powerHeight = natHeight;
         }
         
-        // Get menu container size
-        let [menuWidth, menuHeight] = this._powerMenuContainer.get_size();
-        if (menuWidth === 0 || menuHeight === 0) {
-            let [, natWidth, , natHeight] = this._powerMenuContainer.get_preferred_size();
-            menuWidth = natWidth;
+        // Use stored fixed width to prevent jitter - never recalculate or read from get_size()
+        let menuWidth = this._powerMenuWidth;
+        if (!menuWidth) {
+            // Calculate if not stored yet (shouldn't happen, but fallback)
+            try {
+                const display = global.display;
+                const primaryMonitor = display.get_primary_monitor();
+                const geometry = display.get_monitor_geometry(primaryMonitor);
+                menuWidth = Math.round(geometry.width * 0.115);
+                this._powerMenuWidth = menuWidth; // Store it
+            } catch (e) {
+                // Last resort: read from size (but this shouldn't happen)
+                [menuWidth] = this._powerMenuContainer.get_size();
+            }
+        }
+        
+        // Always enforce the stored width to prevent jitter
+        this._powerMenuContainer.set_width(menuWidth);
+        _applyScaledStyle(this._powerMenuContainer, {
+            'width': menuWidth,
+            'min-width': menuWidth,
+            'max-width': menuWidth
+        });
+        
+        // Get height from actual size (width is fixed, height is dynamic based on content)
+        let [, menuHeight] = this._powerMenuContainer.get_size();
+        if (menuHeight === 0) {
+            let [, , , natHeight] = this._powerMenuContainer.get_preferred_size();
             menuHeight = natHeight;
         }
         
         // Position menu above the power button, right-aligned
         // Right edge of menu aligns with right edge of power button
+        // Use height-based scaling for gap to prevent stretching on ultra-wide monitors
+        let gapSize = 8; // Base gap
+        try {
+            const display = global.display;
+            const primaryMonitor = display.get_primary_monitor();
+            const geometry = display.get_monitor_geometry(primaryMonitor);
+            const heightScale = geometry.height / BASE_HEIGHT;
+            gapSize = Math.round(8 * heightScale);
+        } catch (e) {
+            // Use base gap if calculation fails
+        }
         let menuX = powerX + powerWidth - menuWidth;
-        let menuY = powerY - menuHeight - 8; // 8px gap above button
+        let menuY = powerY - menuHeight - gapSize; // Scaled gap above button
         
         // Ensure menu stays within canvas boundaries
         menuX = Math.max(0, Math.min(menuX, canvasWidth - menuWidth));
         menuY = Math.max(0, menuY); // Allow menu to go above if there's space, but not below 0
         
-        this._powerMenuContainer.set_position(menuX, menuY);
+        // Get current position to check if it actually changed
+        let [currentX, currentY] = this._powerMenuContainer.get_position();
+        if (currentX !== menuX || currentY !== menuY) {
+            this._powerMenuContainer.set_position(menuX, menuY);
+        }
+        
         this._logPowerMenuState('updatePowerMenuPosition');
     }
 
@@ -1018,8 +1366,274 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         return { index: primaryMonitor, geometry: display.get_monitor_geometry(primaryMonitor) };
     }
 
+    _setContainerWidths(monitorGeometry = null) {
+        // Set container widths synchronously before dialog is shown
+        // This prevents visual glitches where containers resize after being displayed
+        // If monitorGeometry is provided, use it; otherwise use primary monitor
+        try {
+            let geometry;
+            if (monitorGeometry) {
+                geometry = monitorGeometry;
+            } else {
+                const display = global.display;
+                const primaryMonitor = display.get_primary_monitor();
+                geometry = display.get_monitor_geometry(primaryMonitor);
+            }
+            
+            // Set container widths using percentage calculation to ensure consistent visual size
+            // across all resolutions (1080p, 1440p, 4K, etc.)
+            // 10.83% for button column (13% / 1.2 = 10.83%), 11.5% for power menu
+            
+            // Set button column width (10.83% of screen width - 1.2x smaller than 13%)
+            // Cancel button is independent and can overflow the column width
+            if (this._buttonColumn) {
+                let columnWidth = Math.round(geometry.width * 0.1083);
+                this._buttonColumn.set_width(columnWidth);
+                
+                // Apply scaled spacing and padding based on height to prevent stretching on ultra-wide monitors
+                // Use height-based scaling to maintain consistent appearance across 16:9, 21:9, 31:9
+                let heightScale = geometry.height / BASE_HEIGHT;
+                let scaledSpacing = Math.round(8 * heightScale); // Base spacing is 8px, scale by height
+                this._buttonColumn.set_spacing(scaledSpacing);
+                
+                // Apply scaled padding via CSS - use height-based scaling to prevent horizontal stretching
+                let scaledPadding = Math.round(16 * heightScale); // Base padding is 16px, scale by height
+                _applyScaledStyle(this._buttonColumn, {
+                    'padding': scaledPadding
+                });
+            }
+            
+            // Set power menu buttons container width (11.5% of screen width)
+            // This is the inner container that holds the buttons - must be fixed to prevent jitter
+            if (this._powerMenuButtons) {
+                let menuWidth = Math.round(geometry.width * 0.115);
+                this._powerMenuButtonsWidth = menuWidth; // Store fixed width
+                this._powerMenuButtons.set_width(menuWidth);
+                // Enforce width via CSS to prevent jitter
+                _applyScaledStyle(this._powerMenuButtons, {
+                    'width': menuWidth,
+                    'min-width': menuWidth,
+                    'max-width': menuWidth
+                });
+            }
+            
+            // Set power menu container width to match buttons container to prevent jitter
+            // This ensures the outer container has a fixed width and doesn't resize based on content
+            if (this._powerMenuContainer) {
+                let menuWidth = Math.round(geometry.width * 0.115);
+                this._powerMenuWidth = menuWidth; // Store fixed width
+                this._powerMenuContainer.set_width(menuWidth);
+                // Apply width via CSS as well to ensure it's enforced
+                _applyScaledStyle(this._powerMenuContainer, {
+                    'width': menuWidth,
+                    'min-width': menuWidth,
+                    'max-width': menuWidth
+                });
+            }
+            
+            // Set button widths using calculated container widths
+            if (this._buttonColumn && this._buttonList) {
+                let columnWidth = Math.round(geometry.width * 0.1083);
+                // Subtract padding using height-based scaling to prevent stretching on ultra-wide monitors
+                let heightScale = geometry.height / BASE_HEIGHT;
+                let totalPadding = Math.round(32 * heightScale); // 16px left + 16px right = 32px base
+                let buttonWidth = columnWidth - totalPadding;
+                for (let button of this._buttonList) {
+                    // Set Cancel button width explicitly (22% of screen width - slightly smaller)
+                    // Must be independent of text length and can overflow parent container
+                    if (button.get_style_class_name && button.get_style_class_name().includes('cancel-button')) {
+                        let cancelWidth = Math.round(geometry.width * 0.22); // 22% of screen width (slightly smaller)
+                        // Calculate 10% margin from left and right (10% of button column width, which is 10.83% of screen)
+                        let columnWidth = Math.round(geometry.width * 0.1083);
+                        let leftMargin = Math.round(columnWidth * 0.10); // 10% of column width
+                        let rightMargin = Math.round(columnWidth * 0.10); // 10% of column width
+                        
+                        // Force width multiple times to ensure it sticks
+                        button.set_width(cancelWidth);
+                        button.set_x_expand(false); // Don't expand, use fixed width
+                        button.set_x_align(Clutter.ActorAlign.START); // Align to start to allow margin
+                        
+                        // Constrain label inside button to not affect button width
+                        let labelChild = button.get_child();
+                        if (labelChild) {
+                            if (labelChild.set_x_expand) {
+                                labelChild.set_x_expand(false);
+                            }
+                            // Set label to fill button width but not constrain it
+                            if (labelChild.set_width) {
+                                labelChild.set_width(cancelWidth);
+                            }
+                        }
+                        
+                        // Force width and margin using CSS with !important
+                        _applyScaledStyle(button, {
+                            'width': cancelWidth,
+                            'min-width': cancelWidth,
+                            'max-width': cancelWidth,
+                            'margin-left': leftMargin,
+                            'margin-right': rightMargin,
+                            'flex-shrink': 0,
+                            'flex-grow': 0
+                        });
+                        
+                        // Set width again after CSS to ensure it's applied
+                        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+                            if (button && !button.is_destroyed()) {
+                                button.set_width(cancelWidth);
+                            }
+                            return GLib.SOURCE_REMOVE;
+                        });
+                        
+                        continue;
+                    }
+                    // Skip power button - it has its own independent sizing
+                    if (button === this._powerButton || (button.get_style_class_name && button.get_style_class_name().includes('ctrl-alt-del-power-button'))) {
+                        continue;
+                    }
+                    button.set_width(buttonWidth);
+                    
+                    // Apply scaled padding and min-height to buttons for consistent appearance
+                    // Use height-based scaling for all padding to prevent stretching on ultra-wide monitors
+                    // This ensures buttons look the same on 16:9, 21:9, and 31:9 aspect ratios
+                    let heightScale = geometry.height / BASE_HEIGHT;
+                    _applyScaledStyle(button, {
+                        'padding-top': Math.round(8 * heightScale),
+                        'padding-bottom': Math.round(8 * heightScale),
+                        'padding-left': Math.round(16 * heightScale), // Use height scale to prevent horizontal stretching
+                        'padding-right': Math.round(16 * heightScale), // Use height scale to prevent horizontal stretching
+                        'min-height': Math.round(60 * heightScale)
+                    });
+                }
+            }
+            
+            // Set power option button widths using calculated container width
+            // This must be done to prevent jitter from content-based sizing
+            if (this._powerMenuButtons && this._powerOptionButtons) {
+                let menuWidth = Math.round(geometry.width * 0.115);
+                // Subtract padding using height-based scaling to prevent stretching on ultra-wide monitors
+                let heightScale = geometry.height / BASE_HEIGHT;
+                let totalPadding = Math.round(16 * heightScale); // 8px left + 8px right = 16px base
+                let buttonWidth = menuWidth - totalPadding;
+                for (let button of this._powerOptionButtons) {
+                    button.set_width(buttonWidth);
+                    // Also enforce width via CSS to prevent jitter
+                    _applyScaledStyle(button, {
+                        'width': buttonWidth,
+                        'min-width': buttonWidth,
+                        'max-width': buttonWidth
+                    });
+                }
+            }
+        } catch (e) {
+            global.log('Ctrl+Alt+Del: Error setting container widths: ' + e);
+            // Fallback: Use percentage calculation if geometry is available
+            try {
+                const display = global.display;
+                const primaryMonitor = display.get_primary_monitor();
+                const geometry = display.get_monitor_geometry(primaryMonitor);
+                
+                if (this._buttonColumn) {
+                    let columnWidth = Math.round(geometry.width * 0.1083);
+                    this._buttonColumn.set_width(columnWidth);
+                    
+                    // Apply height-based scaling for spacing and padding
+                    let heightScale = geometry.height / BASE_HEIGHT;
+                    let scaledSpacing = Math.round(8 * heightScale);
+                    this._buttonColumn.set_spacing(scaledSpacing);
+                    let scaledPadding = Math.round(16 * heightScale);
+                    _applyScaledStyle(this._buttonColumn, {
+                        'padding': scaledPadding
+                    });
+                    
+                    if (this._buttonList) {
+                        let totalPadding = Math.round(32 * heightScale);
+                        let buttonWidth = columnWidth - totalPadding;
+                        for (let button of this._buttonList) {
+                            // Set Cancel button width explicitly (22% of screen width - slightly smaller)
+                            if (button.get_style_class_name && button.get_style_class_name().includes('cancel-button')) {
+                                let cancelWidth = Math.round(geometry.width * 0.22); // 22% of screen width (slightly smaller)
+                                // Calculate 10% margin from left and right (10% of button column width, which is 10.83% of screen)
+                                let columnWidth = Math.round(geometry.width * 0.1083);
+                                let leftMargin = Math.round(columnWidth * 0.10); // 10% of column width
+                                let rightMargin = Math.round(columnWidth * 0.10); // 10% of column width
+                                button.set_width(cancelWidth);
+                                button.set_x_align(Clutter.ActorAlign.START); // Align to start to allow margin
+                                _applyScaledStyle(button, {
+                                    'width': cancelWidth,
+                                    'min-width': cancelWidth,
+                                    'max-width': cancelWidth,
+                                    'margin-left': leftMargin,
+                                    'margin-right': rightMargin
+                                });
+                                continue;
+                            }
+                            if (button === this._powerButton || (button.get_style_class_name && button.get_style_class_name().includes('ctrl-alt-del-power-button'))) {
+                                continue;
+                            }
+                            button.set_width(buttonWidth);
+                            
+                            // Apply height-based scaling for button padding and min-height
+                            _applyScaledStyle(button, {
+                                'padding-top': Math.round(8 * heightScale),
+                                'padding-bottom': Math.round(8 * heightScale),
+                                'padding-left': Math.round(16 * heightScale),
+                                'padding-right': Math.round(16 * heightScale),
+                                'min-height': Math.round(60 * heightScale)
+                            });
+                        }
+                    }
+                }
+                
+                if (this._powerMenuButtons) {
+                    let menuWidth = Math.round(geometry.width * 0.115);
+                    this._powerMenuButtonsWidth = menuWidth; // Store fixed width
+                    this._powerMenuButtons.set_width(menuWidth);
+                    // Enforce width via CSS to prevent jitter
+                    _applyScaledStyle(this._powerMenuButtons, {
+                        'width': menuWidth,
+                        'min-width': menuWidth,
+                        'max-width': menuWidth
+                    });
+                    
+                    if (this._powerOptionButtons) {
+                        let heightScale = geometry.height / BASE_HEIGHT;
+                        let totalPadding = Math.round(16 * heightScale);
+                        let buttonWidth = menuWidth - totalPadding;
+                        for (let button of this._powerOptionButtons) {
+                            button.set_width(buttonWidth);
+                            // Also enforce width via CSS to prevent jitter
+                            _applyScaledStyle(button, {
+                                'width': buttonWidth,
+                                'min-width': buttonWidth,
+                                'max-width': buttonWidth
+                            });
+                        }
+                    }
+                }
+                
+                // Set power menu container width to match buttons container to prevent jitter
+                if (this._powerMenuContainer) {
+                    let menuWidth = Math.round(geometry.width * 0.115);
+                    this._powerMenuWidth = menuWidth; // Store fixed width
+                    this._powerMenuContainer.set_width(menuWidth);
+                    // Apply width via CSS as well to ensure it's enforced
+                    _applyScaledStyle(this._powerMenuContainer, {
+                        'width': menuWidth,
+                        'min-width': menuWidth,
+                        'max-width': menuWidth
+                    });
+                }
+            } catch (e2) {
+                global.log('Ctrl+Alt+Del: Error in fallback width setting: ' + e2);
+            }
+        }
+    }
+
     open() {
         let display = global.display;
+        
+        // Set container widths BEFORE opening dialog to prevent visual glitches
+        this._setContainerWidths();
         
         // First, open the dialog to get its initial position
         _createBlackOverlays(Main.uiGroup);
@@ -1047,6 +1661,9 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         
         // Store the monitor geometry for the polling loop to use
         this._currentMonitorGeometry = monitorGeometry;
+        
+        // Update container widths based on actual monitor (in case it's different from primary)
+        this._setContainerWidths(monitorGeometry);
         
         // Ensure dialog fills entire screen border-to-border of the detected monitor
         this.actor.set_size(monitorGeometry.width, monitorGeometry.height);
@@ -1279,11 +1896,14 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         this._fixedConstraintHeight = null;
         this._currentMonitorGeometry = null;
 
-        if (this._powerMenuAllocationId && this._powerMenuContainer) {
+        // No allocation signal to disconnect (we removed it to prevent jitter)
+        this._powerMenuAllocationId = null;
+
+        if (this._powerMenuClickOutsideId && this.actor) {
             try {
-                this._powerMenuContainer.disconnect(this._powerMenuAllocationId);
+                this.actor.disconnect(this._powerMenuClickOutsideId);
             } catch (e) {}
-            this._powerMenuAllocationId = null;
+            this._powerMenuClickOutsideId = null;
         }
 
         if (this._powerMenuContainer) {
@@ -1332,11 +1952,14 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             this._keyId = null;
         }
 
-        if (this._powerMenuAllocationId && this._powerMenuContainer) {
+        // No allocation signal to disconnect (we removed it to prevent jitter)
+        this._powerMenuAllocationId = null;
+
+        if (this._powerMenuClickOutsideId && this.actor) {
             try {
-                this._powerMenuContainer.disconnect(this._powerMenuAllocationId);
+                this.actor.disconnect(this._powerMenuClickOutsideId);
             } catch (e) {}
-            this._powerMenuAllocationId = null;
+            this._powerMenuClickOutsideId = null;
         }
 
         if (this._powerMenuContainer) {
