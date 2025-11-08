@@ -4,7 +4,7 @@
  * based on the monitor resolution to ensure uniform experience across
  * 1080p, 1440p, 4K, 8K, and other resolutions.
  * 
- * DEBUG BORDERS - Each box has a different color for identification:
+ * DEBUG BORDERS - Uncomment for debugging (each box has a different color):
  * Red: .ctrl-alt-del-dialog (main dialog actor)
  * Orange: .modal-dialog (modal dialog container)
  * Yellow: .modal-dialog-content-box (content box)
@@ -86,7 +86,7 @@
 /* Spacing between buttons - use CSS spacing property (GNOME Shell specific) */
 /* Exception: keep the button container black with rounded corners */
 .ctrl-alt-del-buttons {
-    spacing: 8px;
+    spacing: 4px !important; /* Half of 8px */
     margin-left: 0;
     margin-right: auto;
     max-width: 10.83% !important; /* ~208px at 1920px width, scales with resolution - 1.2x smaller than 13% */
@@ -129,8 +129,8 @@
     flex-shrink: 0 !important; /* Don't shrink based on content */
     flex-grow: 1 !important; /* Grow to fill available space */
     min-height: 60px; /* Base value */
-    padding-top: 8px; /* Base value */
-    padding-bottom: 8px; /* Base value */
+    padding-top: 4px; /* Base value - half of 8px */
+    padding-bottom: 4px; /* Base value - half of 8px */
     padding-left: 16px; /* Base value */
     padding-right: 16px; /* Base value */
     color: rgba(255, 255, 255, 0.9);

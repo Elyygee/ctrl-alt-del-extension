@@ -16,42 +16,12 @@ let _isLocking = false;
 let _isOpeningOrClosing = false;
 let _lastToggleTime = 0;
 let _pollingId = null;
-let _testCommandFile = null;
-let _testLogFile = null;
-
-const TEST_LOG_PATH = GLib.build_filenamev([GLib.get_home_dir(), '.ctrl-alt-del-test-log']);
-const TEST_COMMAND_PATH = GLib.build_filenamev([GLib.get_home_dir(), '.ctrl-alt-del-command.json']);
 
 // Scaling system for different monitor resolutions
 // Base resolution: 1920x1080 (Full HD)
 const BASE_WIDTH = 1920;
 const BASE_HEIGHT = 1080;
 
-function _getScaleFactor() {
-    try {
-        const display = global.display;
-        const primaryMonitor = display.get_primary_monitor();
-        const geometry = display.get_monitor_geometry(primaryMonitor);
-        
-        // Use the smaller dimension to maintain aspect ratio
-        const widthScale = geometry.width / BASE_WIDTH;
-        const heightScale = geometry.height / BASE_HEIGHT;
-        
-        // Use average scale for balanced scaling, or minimum for conservative scaling
-        // Using average provides better scaling across different aspect ratios
-        const scale = (widthScale + heightScale) / 2;
-        
-        // Clamp scale to reasonable bounds (0.5x to 3x)
-        return Math.max(0.5, Math.min(3.0, scale));
-    } catch (e) {
-        global.log('Ctrl+Alt+Del: Error calculating scale factor: ' + e);
-        return 1.0; // Fallback to no scaling
-    }
-}
-
-function _scale(value) {
-    return Math.round(value * _getScaleFactor());
-}
 
 // Apply scaled CSS styles to an element
 function _applyScaledStyle(element, styles) {
@@ -74,54 +44,22 @@ function _applyScaledStyle(element, styles) {
     }
 }
 
-function _appendTestLog(message) {
-    try {
-        if (!_testLogFile) {
-            _testLogFile = Gio.File.new_for_path(TEST_LOG_PATH);
-        }
-
-        let timestamp = new Date().toISOString();
-        let line = `${timestamp} ${message}\n`;
-        let stream = null;
-        if (_testLogFile.query_exists(null)) {
-            stream = _testLogFile.append_to(Gio.FileCreateFlags.NONE, null);
-        } else {
-            stream = _testLogFile.create(Gio.FileCreateFlags.NONE, null);
-        }
-        try {
-            stream.write_all(ByteArray.fromString(line), null);
-        } finally {
-            stream.close(null);
-        }
-    } catch (e) {
-        global.log('Ctrl+Alt+Del: Failed to append test log: ' + e);
-    }
-}
-
-function _clearTestLog() {
-    try {
-        if (!_testLogFile) {
-            _testLogFile = Gio.File.new_for_path(TEST_LOG_PATH);
-        }
-        if (_testLogFile.query_exists(null)) {
-            _testLogFile.delete(null);
-        }
-    } catch (e) {
-        global.log('Ctrl+Alt+Del: Failed to clear test log: ' + e);
-    }
-}
 
 // Check if there are multiple users on the system
+// Uses getent passwd to check all regular users (UID >= 1000 and < 65534)
+// Returns true if there are more than 1 user (>= 2), false if exactly 1 user
 function _hasMultipleUsers() {
     try {
-        let [success, stdout, stderr, exitCode] = GLib.spawn_command_line_sync('loginctl list-users --no-legend');
-        if (success && exitCode === 0) {
+        // Use sh -c to properly handle the pipe and awk command
+        let [success, stdout, stderr, exitCode] = GLib.spawn_command_line_sync('sh -c "getent passwd | awk -F: \'$3 >= 1000 && $3 < 65534 {print $1}\' | sort -u"');
+        if (success && exitCode === 0 && stdout) {
             let output = stdout.toString();
             let lines = output.split('\n').filter(line => line.trim().length > 0);
+            // Return true if there are more than 1 user (>= 2), false if exactly 1 user
             return lines.length > 1;
         }
     } catch (e) {
-        global.log('Ctrl+Alt+Del: loginctl check failed: ' + e);
+        global.log('Ctrl+Alt+Del: User detection failed: ' + e);
     }
     return false;
 }
@@ -283,11 +221,6 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         this._powerMenuWidth = null; // Store fixed width to prevent jitter
         this._powerMenuButtonsWidth = null; // Store fixed width for inner buttons container
 
-        const logDialog = (message) => {
-            _appendTestLog(`[dialog ${this._dialogId}] ${message}`);
-        };
-        this._logDialog = logDialog;
-
         const makeBtn = (label, cb, style = 'ctrl-alt-del-button') => {
             let isCancel = style.includes('cancel-button');
             let b = new St.Button({ 
@@ -342,6 +275,9 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             buttonColumn.add_child(b);
             this._buttonList.push(b);
             
+            // Special handling for switch user button - visibility is managed by _hasMultipleUsers() check
+            // Don't force visibility here, let the initial check and open() method handle it
+            
             // Set Cancel button width immediately after creation
             if (isCancel) {
                 try {
@@ -378,7 +314,13 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                     try {
                         let [columnWidth] = buttonColumn.get_size();
                         if (columnWidth > 0) {
-                            let buttonWidth = columnWidth - _scale(32); // Subtract padding
+                            // Use height-based scaling for padding (consistent with _setContainerWidths)
+                            const display = global.display;
+                            const primaryMonitor = display.get_primary_monitor();
+                            const geometry = display.get_monitor_geometry(primaryMonitor);
+                            const heightScale = geometry.height / BASE_HEIGHT;
+                            const totalPadding = Math.round(32 * heightScale); // 16px left + 16px right = 32px base
+                            let buttonWidth = columnWidth - totalPadding;
                             b.set_width(buttonWidth);
                         }
                     } catch (e) {
@@ -426,17 +368,23 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             });
         });
 
-        // Switch User button (only if multiple users)
-        if (_hasMultipleUsers()) {
-            makeBtn('Switch User', () => {
-                this.close();
-                try {
-                    GLib.spawn_command_line_async('gdmflexiserver');
-                } catch (e) {
-                    global.log('Ctrl+Alt+Del: gdmflexiserver failed: ' + e);
-                }
-            });
-        }
+        // Switch User button (always create, but show/hide based on multiple users)
+        this._switchUserButton = makeBtn('Switch User', () => {
+            this.close();
+            try {
+                GLib.spawn_command_line_async('gdmflexiserver');
+            } catch (e) {
+                global.log('Ctrl+Alt+Del: gdmflexiserver failed: ' + e);
+            }
+        });
+        
+        // Initially set visibility based on multiple users (will be updated in open() if needed)
+        // Always show the button initially - visibility will be managed in open()
+        // This ensures the button exists and can be shown when needed
+        this._switchUserButton.show();
+        this._switchUserButton.visible = true;
+        this._switchUserButton.set_opacity(255);
+        this._switchUserButton.can_focus = true;
 
         // Sign Out button
         makeBtn('Sign Out', () => {
@@ -527,58 +475,15 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         const powerOptionButtons = [];
         this._powerOptionButtons = powerOptionButtons;
 
-        const logPowerMenuState = (reason) => {
-            let state = {
-                reason,
-                visible: false,
-                menuPosition: null,
-                menuSize: null,
-                powerButtonPosition: null,
-                powerButtonSize: null,
-                canvasSize: null,
-                optionCount: powerOptionButtons.length,
-            };
-
-            if (this._buttonCanvas) {
-                let [canvasWidth, canvasHeight] = this._buttonCanvas.get_size();
-                state.canvasSize = { width: canvasWidth, height: canvasHeight };
-            }
-
-            if (this._powerBox) {
-                let [pbX, pbY] = this._powerBox.get_position();
-                let [pbW, pbH] = this._powerBox.get_size();
-                state.powerButtonPosition = { x: pbX, y: pbY };
-                state.powerButtonSize = { width: pbW, height: pbH };
-            }
-
-            if (this._powerMenuContainer) {
-                state.visible = !!this._powerMenuContainer.visible;
-                let [menuX, menuY] = this._powerMenuContainer.get_position();
-                let [menuW, menuH] = this._powerMenuContainer.get_size();
-                state.menuPosition = { x: menuX, y: menuY };
-                state.menuSize = { width: menuW, height: menuH };
-            }
-
-            try {
-                this._logDialog(`POWER_MENU_STATE ${JSON.stringify(state)}`);
-            } catch (e) {
-                this._logDialog(`POWER_MENU_STATE_ERROR ${e}`);
-            }
-        };
-        this._logPowerMenuState = logPowerMenuState;
 
         const hidePowerMenu = () => {
             if (!this._powerMenuContainer) {
-                this._logDialog('hidePowerMenu: container missing');
                 return;
             }
             if (!this._powerMenuContainer.visible) {
-                this._logDialog('hidePowerMenu: already hidden');
-                logPowerMenuState('hidePowerMenu-alreadyHidden');
                 return;
             }
             this._powerMenuContainer.hide();
-            logPowerMenuState('hidePowerMenu');
             if (powerButton) {
                 powerButton.grab_key_focus();
             }
@@ -641,23 +546,19 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             option.set_child(optionBox);
 
             const activate = () => {
-                this._logDialog(`POWER_OPTION_ACTIVATE "${label}"`);
                 hidePowerMenu();
                 this.close();
                 GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
                     try {
                         GLib.spawn_command_line_async(command);
-                        this._logDialog(`POWER_OPTION_COMMAND "${label}" executed`);
                     } catch (e) {
                         global.log(`Ctrl+Alt+Del: ${label} failed: ` + e);
-                        this._logDialog(`POWER_OPTION_ERROR "${label}" ${e}`);
                     }
                     return false;
                 });
             };
 
             option.connect('clicked', () => {
-                this._logDialog(`POWER_OPTION_CLICK "${label}" mouse=${!this._usingKeyboard}`);
                 if (!this._usingKeyboard) {
                     if (global.stage) {
                         global.stage.set_key_focus(null);
@@ -675,13 +576,11 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 this._usingKeyboard = true;
                 let key = event.get_key_symbol();
                 if (key === 0xFF0D || key === 0x20) {
-                    this._logDialog(`POWER_OPTION_KEY "${label}" ENTER/SPACE`);
                     activate();
                     return true;
                 }
 
                 if (key === 0xFF1B) {
-                    this._logDialog(`POWER_OPTION_KEY "${label}" ESC`);
                     hidePowerMenu();
                     return true;
                 }
@@ -730,7 +629,13 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 try {
                     let [containerWidth] = powerMenuButtons.get_size();
                     if (containerWidth > 0) {
-                        let buttonWidth = containerWidth - _scale(16); // Subtract padding
+                        // Use height-based scaling for padding (consistent with _setContainerWidths)
+                        const display = global.display;
+                        const primaryMonitor = display.get_primary_monitor();
+                        const geometry = display.get_monitor_geometry(primaryMonitor);
+                        const heightScale = geometry.height / BASE_HEIGHT;
+                        const totalPadding = Math.round(16 * heightScale); // 8px left + 8px right = 16px base
+                        let buttonWidth = containerWidth - totalPadding;
                         option.set_width(buttonWidth);
                     }
                 } catch (e) {
@@ -751,7 +656,6 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             }
             this._powerButtonAllocationIds.push(allocationId);
             
-            logPowerMenuState(`addPowerOption-${label}`);
         };
 
         addPowerOption('Sleep', 'systemctl suspend', 'weather-clear-night-symbolic');
@@ -759,15 +663,11 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         addPowerOption('Restart', 'systemctl reboot', 'view-refresh-symbolic');
 
         const showPowerMenu = (initialIndex = null) => {
-            this._logDialog('showPowerMenu requested');
             if (!this._powerMenuContainer) {
-                this._logDialog('showPowerMenu aborted: no container');
                 return;
             }
             try {
                 if (this._powerMenuContainer.visible) {
-                    this._logDialog('showPowerMenu: already visible');
-                    logPowerMenuState('showPowerMenu-alreadyVisible');
                     return;
                 }
 
@@ -830,9 +730,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 if (typeof initialIndex === 'number' && powerOptionButtons[initialIndex]) {
                     powerOptionButtons[initialIndex].grab_key_focus();
                 }
-                logPowerMenuState('showPowerMenu');
             } catch (e) {
-                this._logDialog(`showPowerMenu ERROR: ${e}`);
                 global.log('Ctrl+Alt+Del: Error in showPowerMenu: ' + e);
             }
         };
@@ -868,7 +766,6 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         this._sizeUpdateId = null;
 
         const togglePowerMenu = (initialIndex = null) => {
-            this._logDialog('togglePowerMenu requested');
             if (this._powerMenuContainer && this._powerMenuContainer.visible) {
                 hidePowerMenu();
             } else {
@@ -888,11 +785,9 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                     global.stage.set_key_focus(null);
                 }
                 // Don't set focus on first button when opened with mouse
-                this._logDialog('powerButton clicked (mouse)');
                 togglePowerMenu(null);
             } else {
                 // Keyboard was used, so set focus on first button
-                this._logDialog('powerButton clicked (keyboard)');
                 togglePowerMenu(wantsFocusTransition ? 0 : null);
             }
         });
@@ -908,14 +803,12 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             let key = event.get_key_symbol();
             if (key === 0xFF0D || key === 0x20) {
                 // Only Enter/Space opens the power menu - arrow keys should just navigate
-                this._logDialog('powerButton key ENTER/SPACE');
                 togglePowerMenu(0);
                 return true;
             }
 
             if (key === 0xFF1B) {
                 // ESC closes the power menu if it's open, otherwise let it propagate to close main dialog
-                this._logDialog('powerButton key ESC');
                 if (this._powerMenuContainer && this._powerMenuContainer.visible) {
                     hidePowerMenu();
                     return true; // Consume event if menu was open
@@ -930,7 +823,6 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         });
 
         this._simulatePowerButtonPress = () => {
-            this._logDialog('simulatePowerButtonPress invoked');
             togglePowerMenu(0);
         };
 
@@ -951,7 +843,6 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             let [canvasX, canvasY, ok] = buttonCanvas.transform_stage_point(stageX, stageY);
             if (!ok) {
                 // If transformation fails, assume click is outside (close menu)
-                this._logDialog('Click outside power menu (transform failed) - closing');
                 hidePowerMenu();
                 return true;
             }
@@ -986,7 +877,6 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
 
             // If click is outside power menu, close it
             if (isOutside) {
-                this._logDialog('Click outside power menu - closing');
                 hidePowerMenu();
                 return true; // Consume the event
             }
@@ -1046,27 +936,30 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 
                 // Power menu is closed, navigate main dialog buttons
                 this._usingKeyboard = true; // Mark that we're using keyboard navigation
-                let currentIndex = -1;
                 let stage = global.stage;
+                // Filter out hidden buttons for navigation
+                let visibleButtons = this._buttonList.filter(btn => btn && btn.visible && btn.get_visible());
+                
                 let focusActor = stage.get_key_focus();
-                for (let i = 0; i < this._buttonList.length; i++) {
-                    if (this._buttonList[i] === focusActor) {
+                let currentIndex = -1;
+                for (let i = 0; i < visibleButtons.length; i++) {
+                    if (visibleButtons[i] === focusActor) {
                         currentIndex = i;
                         break;
                     }
                 }
                 
-                if (currentIndex === -1 && this._buttonList.length > 0) {
-                    this._buttonList[0].grab_key_focus();
+                if (currentIndex === -1 && visibleButtons.length > 0) {
+                    visibleButtons[0].grab_key_focus();
                     return true;
                 }
                 
                 if (key === 0xFF52) { // Up
-                    let newIndex = currentIndex > 0 ? currentIndex - 1 : this._buttonList.length - 1;
-                    this._buttonList[newIndex].grab_key_focus();
+                    let newIndex = currentIndex > 0 ? currentIndex - 1 : visibleButtons.length - 1;
+                    visibleButtons[newIndex].grab_key_focus();
                 } else { // Down
-                    let newIndex = currentIndex < this._buttonList.length - 1 ? currentIndex + 1 : 0;
-                    this._buttonList[newIndex].grab_key_focus();
+                    let newIndex = currentIndex < visibleButtons.length - 1 ? currentIndex + 1 : 0;
+                    visibleButtons[newIndex].grab_key_focus();
                 }
                 return true;
             }
@@ -1109,28 +1002,31 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 
                 // Power menu is closed, navigate main dialog buttons
                 this._usingKeyboard = true; // Mark that we're using keyboard navigation
-                let currentIndex = -1;
                 let stage = global.stage;
+                // Filter out hidden buttons for navigation
+                let visibleButtons = this._buttonList.filter(btn => btn && btn.visible && btn.get_visible());
+                
                 let focusActor = stage.get_key_focus();
-                for (let i = 0; i < this._buttonList.length; i++) {
-                    if (this._buttonList[i] === focusActor) {
+                let currentIndex = -1;
+                for (let i = 0; i < visibleButtons.length; i++) {
+                    if (visibleButtons[i] === focusActor) {
                         currentIndex = i;
                         break;
                     }
                 }
                 
-                if (currentIndex === -1 && this._buttonList.length > 0) {
-                    this._buttonList[0].grab_key_focus();
+                if (currentIndex === -1 && visibleButtons.length > 0) {
+                    visibleButtons[0].grab_key_focus();
                     return true;
                 }
                 
                 let shiftPressed = event.get_state() & Clutter.ModifierType.SHIFT_MASK;
                 if (shiftPressed) {
-                    let newIndex = currentIndex > 0 ? currentIndex - 1 : this._buttonList.length - 1;
-                    this._buttonList[newIndex].grab_key_focus();
+                    let newIndex = currentIndex > 0 ? currentIndex - 1 : visibleButtons.length - 1;
+                    visibleButtons[newIndex].grab_key_focus();
                 } else {
-                    let newIndex = currentIndex < this._buttonList.length - 1 ? currentIndex + 1 : 0;
-                    this._buttonList[newIndex].grab_key_focus();
+                    let newIndex = currentIndex < visibleButtons.length - 1 ? currentIndex + 1 : 0;
+                    visibleButtons[newIndex].grab_key_focus();
                 }
                 return true;
             }
@@ -1291,7 +1187,6 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             this._powerMenuContainer.set_position(menuX, menuY);
         }
         
-        this._logPowerMenuState('updatePowerMenuPosition');
     }
 
     _calculateSafetyMargins(primaryGeometry) {
@@ -1393,13 +1288,13 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                 // Apply scaled spacing and padding based on height to prevent stretching on ultra-wide monitors
                 // Use height-based scaling to maintain consistent appearance across 16:9, 21:9, 31:9
                 let heightScale = geometry.height / BASE_HEIGHT;
-                let scaledSpacing = Math.round(8 * heightScale); // Base spacing is 8px, scale by height
-                this._buttonColumn.set_spacing(scaledSpacing);
+                let scaledSpacing = Math.round(4 * heightScale); // Base spacing is 4px (half of 8px), scale by height
                 
-                // Apply scaled padding via CSS - use height-based scaling to prevent horizontal stretching
+                // Apply scaled padding and spacing via CSS - use height-based scaling to prevent horizontal stretching
                 let scaledPadding = Math.round(16 * heightScale); // Base padding is 16px, scale by height
                 _applyScaledStyle(this._buttonColumn, {
-                    'padding': scaledPadding
+                    'padding': scaledPadding,
+                    'spacing': scaledSpacing
                 });
             }
             
@@ -1497,11 +1392,11 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                     // This ensures buttons look the same on 16:9, 21:9, and 31:9 aspect ratios
                     let heightScale = geometry.height / BASE_HEIGHT;
                     _applyScaledStyle(button, {
-                        'padding-top': Math.round(8 * heightScale),
-                        'padding-bottom': Math.round(8 * heightScale),
+                        'padding-top': Math.round(4 * heightScale), // Half of 8px
+                        'padding-bottom': Math.round(4 * heightScale), // Half of 8px
                         'padding-left': Math.round(16 * heightScale), // Use height scale to prevent horizontal stretching
                         'padding-right': Math.round(16 * heightScale), // Use height scale to prevent horizontal stretching
-                        'min-height': Math.round(60 * heightScale)
+                        'min-height': Math.round(50 * heightScale) // Half of 60px
                     });
                 }
             }
@@ -1538,11 +1433,11 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                     
                     // Apply height-based scaling for spacing and padding
                     let heightScale = geometry.height / BASE_HEIGHT;
-                    let scaledSpacing = Math.round(8 * heightScale);
-                    this._buttonColumn.set_spacing(scaledSpacing);
+                    let scaledSpacing = Math.round(4 * heightScale); // Base spacing is 4px (half of 8px)
                     let scaledPadding = Math.round(16 * heightScale);
                     _applyScaledStyle(this._buttonColumn, {
-                        'padding': scaledPadding
+                        'padding': scaledPadding,
+                        'spacing': scaledSpacing
                     });
                     
                     if (this._buttonList) {
@@ -1574,11 +1469,11 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                             
                             // Apply height-based scaling for button padding and min-height
                             _applyScaledStyle(button, {
-                                'padding-top': Math.round(8 * heightScale),
-                                'padding-bottom': Math.round(8 * heightScale),
+                                'padding-top': Math.round(4 * heightScale), // Half of 8px
+                                'padding-bottom': Math.round(4 * heightScale), // Half of 8px
                                 'padding-left': Math.round(16 * heightScale),
                                 'padding-right': Math.round(16 * heightScale),
-                                'min-height': Math.round(60 * heightScale)
+                                'min-height': Math.round(30 * heightScale) // Half of 60px
                             });
                         }
                     }
@@ -1631,6 +1526,78 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
 
     open() {
         let display = global.display;
+        
+        // Check for multiple users and show/hide switch user button accordingly
+        // Check immediately and also in idle callback to ensure it's shown
+        if (this._switchUserButton) {
+            let hasMultiple = _hasMultipleUsers();
+            
+            if (hasMultiple) {
+                // Multiple users exist - show the button immediately with all methods
+                // Use multiple approaches to ensure it's visible
+                // First ensure parent is visible
+                if (this._switchUserButton.get_parent()) {
+                    this._switchUserButton.get_parent().show();
+                    this._switchUserButton.get_parent().visible = true;
+                }
+                // Then show the button itself
+                this._switchUserButton.visible = true;
+                this._switchUserButton.set_opacity(255);
+                this._switchUserButton.show();
+                this._switchUserButton.can_focus = true;
+                // Force remove any hiding styles and ensure visibility
+                this._switchUserButton.set_style('opacity: 1 !important; visibility: visible !important; display: block !important;');
+            } else {
+                // Only 1 user - hide the button
+                this._switchUserButton.hide();
+                this._switchUserButton.visible = false;
+                this._switchUserButton.can_focus = false;
+            }
+        }
+        
+        // Also check in idle callback to ensure it stays visible after dialog is fully rendered
+        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            if (this._switchUserButton) {
+                // Check if multiple users exist and show/hide the button accordingly
+                let hasMultiple = _hasMultipleUsers();
+                
+                if (hasMultiple) {
+                    // Multiple users exist (> 1) - show the button
+                    // Force visibility with multiple methods to ensure it's shown
+                    this._switchUserButton.visible = true;
+                    this._switchUserButton.set_opacity(255);
+                    this._switchUserButton.show();
+                    this._switchUserButton.can_focus = true;
+                    // Remove any CSS that might hide it and force visibility
+                    let currentStyle = this._switchUserButton.get_style() || '';
+                    // Remove any opacity/visibility/display rules that might hide it
+                    let cleanStyle = currentStyle.replace(/opacity\s*:[^;]+;?/gi, '')
+                                                 .replace(/visibility\s*:[^;]+;?/gi, '')
+                                                 .replace(/display\s*:[^;]+;?/gi, '');
+                    this._switchUserButton.set_style(cleanStyle + ' opacity: 1 !important; visibility: visible !important; display: block !important;');
+                    // Ensure button is in the layout and visible
+                    if (this._switchUserButton.get_parent()) {
+                        this._switchUserButton.get_parent().queue_redraw();
+                    }
+                    // Force a second check after a short delay to ensure it stays visible
+                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                        if (this._switchUserButton && _hasMultipleUsers()) {
+                            this._switchUserButton.visible = true;
+                            this._switchUserButton.set_opacity(255);
+                            this._switchUserButton.show();
+                            this._switchUserButton.can_focus = true;
+                        }
+                        return GLib.SOURCE_REMOVE;
+                    });
+                } else {
+                    // Only 1 user exists - hide the button
+                    this._switchUserButton.hide();
+                    this._switchUserButton.visible = false;
+                    this._switchUserButton.can_focus = false;
+                }
+            }
+            return GLib.SOURCE_REMOVE;
+        });
         
         // Set container widths BEFORE opening dialog to prevent visual glitches
         this._setContainerWidths();
@@ -2058,211 +2025,8 @@ function _handleCtrlAltDel() {
     }
 }
 
-function _handleTestCommandFile() {
-    if (!_testCommandFile) {
-        return;
-    }
-
-    try {
-        if (!_testCommandFile.query_exists(null)) {
-            return;
-        }
-
-        let [, contents] = _testCommandFile.load_contents(null);
-        let text = ByteArray.toString(contents);
-        let payload = null;
-        try {
-            payload = JSON.parse(text);
-        } catch (e) {
-            global.log('Ctrl+Alt+Del: Failed to parse test command JSON: ' + e + ' (content: ' + text + ')');
-            _appendTestLog(`CMD PARSE_ERROR ${e}`);
-        }
-
-        try {
-            _testCommandFile.delete(null);
-        } catch (e) {}
-
-        if (!payload) {
-            return;
-        }
-
-        _processTestCommands(payload);
-    } catch (e) {
-        global.log('Ctrl+Alt+Del: Error handling test command file: ' + e);
-        _appendTestLog(`CMD ERROR ${e}`);
-        try {
-            if (_testCommandFile && _testCommandFile.query_exists(null)) {
-                _testCommandFile.delete(null);
-            }
-        } catch (err) {}
-    }
-}
-
-function _processTestCommands(payload) {
-    let id = null;
-    let actions = [];
-
-    if (Array.isArray(payload)) {
-        actions = payload;
-    } else if (payload && Array.isArray(payload.actions)) {
-        actions = payload.actions;
-        id = payload.id || null;
-    } else if (payload && (payload.action || payload.type)) {
-        actions = [payload];
-        id = payload.id || null;
-    }
-
-    if (!id) {
-        id = GLib.uuid_string_random();
-    }
-
-    if (!actions || actions.length === 0) {
-        _appendTestLog(`CMD ${id} NO_ACTIONS`);
-        return;
-    }
-
-    try {
-        global.log(`Ctrl+Alt+Del: Processing test command ${id} with ${actions.length} action(s)`);
-    } catch (e) {}
-
-    _appendTestLog(`CMD ${id} START (${actions.length} actions)`);
-
-    for (let actionObj of actions) {
-        let type = null;
-        if (!actionObj) {
-            continue;
-        }
-        type = actionObj.action || actionObj.type || null;
-        if (!type) {
-            _appendTestLog(`CMD ${id} ACTION UNKNOWN null`);
-            continue;
-        }
-        let upperType = type.toUpperCase();
-        try {
-            switch (type) {
-                case 'clearLog':
-                    _clearTestLog();
-                    _appendTestLog(`CMD ${id} ACTION ${upperType} OK`);
-                    break;
-                case 'wait':
-                case 'sleep':
-                case 'delay': {
-                    let ms = 0;
-                    const candidates = [actionObj.ms, actionObj.duration, actionObj.time];
-                    for (let value of candidates) {
-                        if (typeof value === 'number') {
-                            ms = value;
-                            break;
-                        } else if (typeof value === 'string') {
-                            let parsed = parseFloat(value);
-                            if (Number.isFinite(parsed)) {
-                                ms = parsed;
-                                break;
-                            }
-                        }
-                    }
-                    if (!Number.isFinite(ms) || ms < 0) {
-                        ms = 0;
-                    }
-                    if (ms > 10000) {
-                        ms = 10000;
-                    }
-                    let usec = Math.floor(ms * 1000);
-                    if (usec > 0) {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} SLEEP ${ms}ms`);
-                        GLib.usleep(usec);
-                    }
-                    _appendTestLog(`CMD ${id} ACTION ${upperType} OK ${ms}ms`);
-                    break;
-                }
-                case 'openDialog':
-                    if (_ctrlAltDelDialog && _ctrlAltDelDialog.actor && _ctrlAltDelDialog.actor.get_parent()) {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} SKIP already open`);
-                    } else {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} EXECUTE`);
-                        _handleCtrlAltDel();
-                        if (_ctrlAltDelDialog) {
-                            let dialogId = _ctrlAltDelDialog._dialogId || 'unknown';
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} DIALOG ${dialogId}`);
-                        } else {
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} PENDING`);
-                        }
-                    }
-                    break;
-                case 'closeDialog':
-                    if (_ctrlAltDelDialog) {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} EXECUTE`);
-                        try {
-                            _ctrlAltDelDialog.close();
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} OK`);
-                        } catch (e) {
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} ERROR ${e}`);
-                        }
-                    } else {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} SKIP no dialog`);
-                    }
-                    break;
-                case 'togglePowerMenu':
-                    if (_ctrlAltDelDialog && _ctrlAltDelDialog._togglePowerMenu) {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} EXECUTE`);
-                        try {
-                            _ctrlAltDelDialog._togglePowerMenu(0);
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} OK`);
-                        } catch (e) {
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} ERROR ${e}`);
-                            global.log('Ctrl+Alt+Del: Error toggling power menu: ' + e);
-                        }
-                    } else {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} SKIP no dialog`);
-                    }
-                    break;
-                case 'showPowerMenu':
-                    if (_ctrlAltDelDialog && _ctrlAltDelDialog._showPowerMenu) {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} EXECUTE`);
-                        try {
-                            _ctrlAltDelDialog._showPowerMenu(0);
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} OK`);
-                        } catch (e) {
-                            _appendTestLog(`CMD ${id} ACTION ${upperType} ERROR ${e}`);
-                            global.log('Ctrl+Alt+Del: Error showing power menu: ' + e);
-                        }
-                    } else {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} SKIP no dialog`);
-                    }
-                    break;
-                case 'hidePowerMenu':
-                    if (_ctrlAltDelDialog && _ctrlAltDelDialog._hidePowerMenu) {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} EXECUTE`);
-                        _ctrlAltDelDialog._hidePowerMenu();
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} OK`);
-                    } else {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} SKIP no dialog`);
-                    }
-                    break;
-                case 'reportPowerMenu':
-                    if (_ctrlAltDelDialog && _ctrlAltDelDialog._logPowerMenuState) {
-                        let label = actionObj.label || 'reportPowerMenu';
-                        _ctrlAltDelDialog._logPowerMenuState(label);
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} OK`);
-                    } else {
-                        _appendTestLog(`CMD ${id} ACTION ${upperType} SKIP no dialog`);
-                    }
-                    break;
-                default:
-                    _appendTestLog(`CMD ${id} ACTION ${upperType} UNKNOWN`);
-                    break;
-            }
-        } catch (e) {
-            _appendTestLog(`CMD ${id} ACTION ${upperType} ERROR ${e}`);
-        }
-    }
-
-    _appendTestLog(`CMD ${id} COMPLETE`);
-}
 
 function enable() {
-    global.log('Ctrl+Alt+Del: Extension enabled!');
-    
     // Try to register global keybinding
     try {
         const Meta = imports.gi.Meta;
@@ -2283,7 +2047,6 @@ function enable() {
                         _handleCtrlAltDel();
                     }
                 );
-                global.log('Ctrl+Alt+Del: Global keybinding registered');
             } catch (e) {
                 global.log('Ctrl+Alt+Del: Could not register keybinding: ' + e);
             }
@@ -2294,38 +2057,17 @@ function enable() {
     
     // Set up file-based trigger polling
     _triggerFile = Gio.file_new_for_path(GLib.get_home_dir() + '/.ctrl-alt-del-trigger');
-    _testCommandFile = Gio.File.new_for_path(TEST_COMMAND_PATH);
-    _clearTestLog();
-    try {
-        global.log(`Ctrl+Alt+Del: Test command path ${TEST_COMMAND_PATH}`);
-        global.log(`Ctrl+Alt+Del: Test log path ${TEST_LOG_PATH}`);
-    } catch (e) {}
-    try {
-        if (_testCommandFile.query_exists(null)) {
-            _testCommandFile.delete(null);
-        }
-    } catch (e) {
-        global.log('Ctrl+Alt+Del: Failed to remove stale test command file: ' + e);
-    }
     
     _pollingId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, function() {
         try {
-            if (_isLocking) {
-                _handleTestCommandFile();
-                return true;
-            }
-            
             if (_triggerFile && _triggerFile.query_exists(null)) {
                 try {
                     _triggerFile.delete(null);
                 } catch (e) {}
                 
                 _handleCtrlAltDel();
-                _handleTestCommandFile();
                 return true;
             }
-
-            _handleTestCommandFile();
         } catch (e) {
             global.log('Ctrl+Alt+Del ERROR: ' + e);
         }
@@ -2338,8 +2080,6 @@ function enable() {
 }
 
 function disable() {
-    global.log('Ctrl+Alt+Del: Extension disabled!');
-    
     if (_pollingId) {
         GLib.source_remove(_pollingId);
         _pollingId = null;
@@ -2353,5 +2093,4 @@ function disable() {
     }
     
     _triggerFile = null;
-    _testCommandFile = null;
 }
