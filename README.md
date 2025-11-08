@@ -43,7 +43,7 @@ Press **Ctrl+Alt+Del** to open the security screen. You can:
 
 * GNOME Shell 42, 43, 44, or 45
 * systemd (for power options)
-* [Mission Centre](https://extensions.gnome.org/extension/1318/mission-center/) extension (required for Task Manager functionality)
+* [Mission Center](https://missioncenter.io/) application (recommended for Task Manager functionality) - Available on [Flathub](https://flathub.org/apps/io.missioncenter.MissionCenter)
 
 ## Screenshots
 
