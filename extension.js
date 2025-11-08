@@ -28,26 +28,26 @@ function _hasMultipleUsers() {
 // Create black overlays for all monitors
 function _createBlackOverlays(parentGroup) {
     _removeBlackOverlays();
-    
-    let display = global.display;
-    let nMonitors = display.get_n_monitors();
-    let targetGroup = parentGroup || Main.uiGroup;
+    const display = global.display;
+    const nMonitors = display.get_n_monitors();
+    const target = parentGroup || Main.uiGroup;
     
     for (let i = 0; i < nMonitors; i++) {
-        let monitorGeometry = display.get_monitor_geometry(i);
-        let overlay = new St.Widget({
+        const g = display.get_monitor_geometry(i);
+        const overlay = new St.Widget({
             style_class: 'ctrl-alt-del-black-overlay',
-            x: monitorGeometry.x,
-            y: monitorGeometry.y,
-            width: monitorGeometry.width + 2,
-            height: monitorGeometry.height + 2,
-            reactive: false,
+            x: g.x,
+            y: g.y,
+            width: g.width,
+            height: g.height,
+            reactive: false
         });
         
+        // Keep a solid black fill regardless of CSS
         overlay.set_background_color(new Clutter.Color({ red: 0, green: 0, blue: 0, alpha: 255 }));
-        targetGroup.add_child(overlay);
-        overlay.show();
+        target.add_child(overlay);
         overlay.set_opacity(255);
+        overlay.show();
         _blackOverlays.push(overlay);
     }
 }
@@ -109,7 +109,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             vertical: true,
             x_expand: true,
             y_expand: true,
-            x_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.START,
             y_align: Clutter.ActorAlign.START,
             style_class: 'ctrl-alt-del-content',
         });
@@ -118,19 +118,29 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         let buttons = new St.BoxLayout({
             vertical: true,
             style_class: 'ctrl-alt-del-buttons',
-            x_align: Clutter.ActorAlign.CENTER,
+            x_align: Clutter.ActorAlign.START,
+            x_expand: false,
         });
         vbox.add_child(buttons);
 
         this._buttonList = [];
 
         const makeBtn = (label, cb, style = 'ctrl-alt-del-button') => {
+            let isCancel = style.includes('cancel-button');
             let b = new St.Button({ 
                 label, 
                 style_class: style,
                 can_focus: true,
-                reactive: true
+                reactive: true,
+                x_align: isCancel ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START
             });
+            
+            // Ensure label inside button is aligned (center for Cancel, left for others)
+            let labelChild = b.get_child();
+            if (labelChild && labelChild.set_x_align) {
+                labelChild.set_x_align(isCancel ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START);
+            }
+            
             b.connect('clicked', () => cb());
             
             b.connect('key-press-event', (actor, event) => {
@@ -223,8 +233,10 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             // Arrow key navigation
             if (key === 0xFF52 || key === 0xFF54) { // Up/Down
                 let currentIndex = -1;
+                let stage = global.stage;
+                let focusActor = stage.get_key_focus();
                 for (let i = 0; i < this._buttonList.length; i++) {
-                    if (this._buttonList[i].has_focus()) {
+                    if (this._buttonList[i] === focusActor) {
                         currentIndex = i;
                         break;
                     }
@@ -248,8 +260,10 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             // Tab navigation
             if (key === 0xFF09) { // Tab
                 let currentIndex = -1;
+                let stage = global.stage;
+                let focusActor = stage.get_key_focus();
                 for (let i = 0; i < this._buttonList.length; i++) {
-                    if (this._buttonList[i].has_focus()) {
+                    if (this._buttonList[i] === focusActor) {
                         currentIndex = i;
                         break;
                     }
@@ -281,48 +295,25 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         let primaryGeometry = display.get_monitor_geometry(primaryMonitor);
         
         _createBlackOverlays(Main.uiGroup);
+        // Make sure overlays sit below the modal dialog group (dialog stays on top)
+        try {
+            const modalGroup = (Main.layoutManager && Main.layoutManager.modalDialogGroup) || this.actor.get_parent();
+            if (modalGroup) {
+                for (let overlay of _blackOverlays) {
+                    if (overlay && overlay.get_parent() === Main.uiGroup) {
+                        Main.uiGroup.set_child_below_sibling(overlay, modalGroup);
+                    }
+                }
+            }
+        } catch (e) {
+            global.log('Ctrl+Alt+Del: z-order tweak failed: ' + e);
+        }
         Main.uiGroup.queue_redraw();
         
         super.open();
         
         this.actor.set_size(primaryGeometry.width, primaryGeometry.height);
         this.actor.set_position(primaryGeometry.x, primaryGeometry.y);
-        
-        // Move overlays to dialog's parent and ensure proper z-ordering
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-            let dialogParent = this.actor.get_parent();
-            if (!dialogParent) return false;
-            
-            // Move overlays to dialog parent
-            for (let i = 0; i < _blackOverlays.length; i++) {
-                let overlay = _blackOverlays[i];
-                let currentParent = overlay.get_parent();
-                let monitorGeometry = display.get_monitor_geometry(i);
-                
-                if (!currentParent) {
-                    dialogParent.add_child(overlay);
-                } else if (currentParent !== dialogParent) {
-                    currentParent.remove_child(overlay);
-                    dialogParent.add_child(overlay);
-                }
-                
-                overlay.set_size(monitorGeometry.width + 2, monitorGeometry.height + 2);
-                overlay.set_position(monitorGeometry.x, monitorGeometry.y);
-                overlay.set_background_color(new Clutter.Color({ red: 0, green: 0, blue: 0, alpha: 255 }));
-                overlay.show();
-                overlay.set_opacity(255);
-            }
-            
-            // Raise dialog above overlays
-            if (_blackOverlays.length > 0) {
-                try {
-                    let lastOverlay = _blackOverlays[_blackOverlays.length - 1];
-                    dialogParent.set_child_above_sibling(this.actor, lastOverlay);
-                } catch (e) {}
-            }
-            
-            return false;
-        });
         
         // Focus first button
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
@@ -496,6 +487,10 @@ function enable() {
         }
         return true;
     });
+    
+    // Note: monitors-changed signal not available in GNOME 42
+    // Overlays are recreated with current geometry each time dialog opens
+    // For GNOME 45+, you could use: global.display.connect('monitors-changed', ...)
 }
 
 function disable() {

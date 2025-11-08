@@ -1,100 +1,89 @@
-/* Dialog container takes whole screen; background transparent */
-.ctrl-alt-del-dialog {
-  background-color: transparent !important;
-  border: 0 !important;
-  box-shadow: none !important;
-}
-
-/* Stretch the dialog actor to full screen */
+/* Modal dialog - remove rounded edges and background from all containers */
+.ctrl-alt-del-dialog,
+.ctrl-alt-del-dialog *,
 .ctrl-alt-del-dialog .modal-dialog,
 .ctrl-alt-del-dialog .modal-dialog-content-box,
-.full-fill {
-  width: 100% !important;
-  height: 100% !important;
-  background-color: transparent !important;
+.ctrl-alt-del-dialog .dialog,
+.ctrl-alt-del-dialog .dialog-content-box {
+    background-color: transparent !important;
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
-/* Lightbox = the black screen (ModalDialog creates this for primary monitor) */
-.lightbox {
-  background-color: rgb(0,0,0) !important;
-  opacity: 1.0 !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-width: 100% !important;
-  min-height: 100% !important;
-  left: 0 !important;
-  top: 0 !important;
+/* Content container - force left alignment */
+.ctrl-alt-del-dialog .modal-dialog-content-box {
+    padding-left: 40px;
 }
 
-/* Black overlays for all monitors - full screen black background */
-/* Size is set explicitly in JavaScript based on monitor geometry */
-.ctrl-alt-del-black-overlay {
-  background-color: rgb(0,0,0) !important;
-  opacity: 1.0 !important;
-  border: none !important;
-  box-shadow: none !important;
-}
-
-/* Content column */
 .ctrl-alt-del-content {
-  padding-top: 200px;           /* vertical offset */
-  padding-left: 40px;
-  padding-right: 40px;
+    padding-left: 0;
+    margin-left: 0;
+    background-color: transparent !important;
+    border-radius: 0 !important;
 }
 
-/* Vertical buttons column */
+/* Spacing between buttons - use CSS spacing property (GNOME Shell specific) */
+/* Exception: keep the button container black with rounded corners */
 .ctrl-alt-del-buttons {
-  spacing: 8px;                 /* Smaller spacing like Windows 11 */
-  width: 320px;                 /* Narrower width for smaller buttons */
+    spacing: 8px;
+    margin-left: 0;
+    margin-right: auto;
+    max-width: 200px;
+    width: 200px;
+    background-color: rgb(0, 0, 0) !important;
+    padding: 16px;
+    border-radius: 4px !important;
 }
 
-/* Buttons: transparent, no outline by default (Windows 11 style) */
+/* Button font size and text alignment */
 .ctrl-alt-del-button {
-  background-color: transparent;
-  border-radius: 4px;
-  border: 1px solid transparent;  /* No visible border by default */
-  color: #fff;
-  font-weight: 400;
-  font-size: 13pt;               /* Smaller font like Windows 11 */
-  padding: 10px 16px;            /* Smaller padding */
-  min-height: 40px;              /* Smaller height */
-  width: 100%;
-  opacity: 1.0;
-  transition: opacity 0.2s ease;
+    font-size: 16pt;
+    text-align: left;
+    background-color: transparent;
+    border: 1px solid transparent !important;
+    box-shadow: none;
+    width: 250px;
+    min-width: 250px;
+    max-width: 250px;
+    min-height: 60px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    padding-left: 16px;
+    padding-right: 16px;
 }
 
-/* Hover: small opacity change for identification (works on ALL buttons) */
-.ctrl-alt-del-button:hover {
-  opacity: 0.65 !important;
-  background-color: rgba(255, 255, 255, 0.05) !important;
-  border-color: transparent;
-  transition: opacity 0.15s ease, background-color 0.15s ease;
-}
-
-/* Focus/Active: show stroke only (no opacity or background change) */
+/* White stroke when button is focused (keyboard navigation) */
+/* Must use !important to override the universal selector */
 .ctrl-alt-del-button:focus,
-.ctrl-alt-del-button:active {
-  border-color: rgba(255,255,255,0.8) !important;
-  background-color: transparent !important;
-  opacity: 1.0 !important;
-  outline: none;                /* Remove default outline */
-}
-
-/* When both hover and focus: show stroke AND hover opacity */
-.ctrl-alt-del-button:focus:hover {
-  border-color: rgba(255,255,255,0.8) !important;
-  background-color: rgba(255, 255, 255, 0.05) !important;
-  opacity: 0.65 !important;
-}
-
-/* Keyboard navigation: show stroke when focused via tab/arrow keys */
 .ctrl-alt-del-button:focus-visible {
-  border-color: rgba(255,255,255,0.8) !important;
-  background-color: transparent !important;
-  opacity: 1.0 !important;
+    border: 1px solid rgba(255, 255, 255, 0.8) !important;
+    outline: none !important;
 }
 
+/* Left align the label text inside the button */
+.ctrl-alt-del-button St.Label {
+    text-align: left;
+    padding-left: 0;
+    margin-left: 0;
+}
+
+/* Cancel button - smaller hitbox and rounded corners */
 .ctrl-alt-del-button.cancel-button {
-  margin-top: 20px;
+    margin-top: 24px; /* Increased to maintain same gap above Cancel (8px spacing + 24px margin = 32px total, same as before) */
+    width: 150px;
+    min-width: 150px;
+    max-width: 150px;
+    min-height: 32px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    border-radius: 8px !important;
+    background-color: rgb(40, 40, 40) !important;
+    text-align: center;
+}
+
+/* Center the label text inside Cancel button */
+.ctrl-alt-del-button.cancel-button St.Label {
+    text-align: center;
 }
 
