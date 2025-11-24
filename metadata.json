@@ -2,7 +2,7 @@
   "name": "Windows Ctrl+Alt+Del Screen",
   "description": "Windows-style Ctrl+Alt+Del security screen with power options.\n\nFeatures:\n* Lock screen\n* Switch user (if multiple users exist)\n* Sign out\n* Task manager\n* Power menu with sleep, shutdown, and restart options\n* Full-screen dialog with rounded buttons\n* Keyboard and mouse navigation support",
   "uuid": "ctrl-alt-del@elyygee.github.io",
-  "shell-version": ["42", "42.9", "43", "44"],
+  "shell-version": ["42", "43", "44"],
   "url": "https://github.com/Elyygee/ctrl-alt-del-extension"
 }
 

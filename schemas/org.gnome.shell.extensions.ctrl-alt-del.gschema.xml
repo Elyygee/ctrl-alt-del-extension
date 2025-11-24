@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.ctrl-alt-del"
+          path="/org/gnome/shell/extensions/ctrl-alt-del/">
+
+    <!-- Keybinding for the Ctrl+Alt+Del shortcut -->
+    <key name="ctrl-alt-del" type="as">
+      <default>[]</default>
+      <summary>Keybinding for opening the Ctrl+Alt+Del dialog</summary>
+      <description>
+        Accelerator for triggering the Windows-style Ctrl+Alt+Del screen.
+        Configure this in GNOME Tweaks or dconf-editor.
+      </description>
+    </key>
+
+  </schema>
+</schemalist>
+
+

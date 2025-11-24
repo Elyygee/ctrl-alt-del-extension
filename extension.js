@@ -1,14 +1,9 @@
 /* Created by Elyygee */
 
-const { GObject, St, Clutter, GLib, Gio } = imports.gi;
+const { GObject, St, Clutter, GLib, Gio, Meta } = imports.gi;
 const Main = imports.ui.main;
 const ModalDialog = imports.ui.modalDialog;
-
-if (typeof Clutter.Actor.prototype.get_visible !== 'function') {
-    Clutter.Actor.prototype.get_visible = function () {
-        return !!this.visible;
-    };
-}
+const ExtensionUtils = imports.misc.extensionUtils;
 
 let _ctrlAltDelDialog = null; 
 let _triggerFile = null;
@@ -17,6 +12,8 @@ let _isLocking = false;
 let _isOpeningOrClosing = false;
 let _lastToggleTime = 0;
 let _pollingId = null;
+let _lockResetId = null;
+let _toggleStateTimeoutId = null;
 
 // Scaling system for different monitor resolutions
 // Base resolution: 1920x1080 (Full HD)
@@ -46,23 +43,64 @@ function _applyScaledStyle(element, styles) {
 }
 
 
-// Check if there are multiple users on the system
-// Uses getent passwd to check all regular users (UID >= 1000 and < 65534)
-// Returns true if there are more than 1 user (>= 2), false if exactly 1 user
-function _hasMultipleUsers() {
+// Asynchronously check if there are multiple users on the system.
+// Uses getent passwd to check all regular users (UID >= 1000 and < 65534).
+// Calls callback(hasMultipleUsers) when finished.
+function _checkMultipleUsersAsync(callback) {
+    if (typeof callback !== 'function')
+        return;
+
+    let subprocess;
     try {
-        // Use sh -c to properly handle the pipe and awk command
-        let [success, stdout, stderr, exitCode] = GLib.spawn_command_line_sync('sh -c "getent passwd | awk -F: \'$3 >= 1000 && $3 < 65534 {print $1}\' | sort -u"');
-        if (success && exitCode === 0 && stdout) {
-            let output = stdout.toString();
-            let lines = output.split('\n').filter(line => line.trim().length > 0);
-            // Return true if there are more than 1 user (>= 2), false if exactly 1 user
-            return lines.length > 1;
-        }
+        subprocess = Gio.Subprocess.new(
+            ['sh', '-c', "getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' | sort -u"],
+            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE
+        );
     } catch (e) {
-        global.log('Ctrl+Alt+Del: User detection failed: ' + e);
+        global.log('Ctrl+Alt+Del: Failed to start user detection subprocess: ' + e);
+        callback(false);
+        return;
     }
-    return false;
+
+    subprocess.communicate_utf8_async(null, null, (proc, res) => {
+        try {
+            let [, stdout, ] = proc.communicate_utf8_finish(res);
+            if (!stdout) {
+                callback(false);
+                return;
+            }
+
+            let lines = stdout.split('\n').filter(line => line.trim().length > 0);
+            callback(lines.length > 1);
+        } catch (e) {
+            global.log('Ctrl+Alt+Del: User detection failed: ' + e);
+            callback(false);
+        }
+    });
+}
+
+// Helpers for common D-Bus/system actions
+
+// Lock screen using either Main.screenShield or D-Bus
+function _lockViaDBus() {
+    Gio.DBus.session.call(
+        'org.gnome.ScreenSaver',
+        '/org/gnome/ScreenSaver',
+        'org.gnome.ScreenSaver',
+        'Lock',
+        null,
+        null,
+        Gio.DBusCallFlags.NONE,
+        -1,
+        null,
+        (conn, res) => {
+            try {
+                conn.call_finish(res);
+            } catch (e) {
+                global.log('Ctrl+Alt+Del: D-Bus lock failed: ' + e);
+            }
+        }
+    );
 }
 
 // Create black overlays for all monitors
@@ -132,13 +170,9 @@ function _lockScreen() {
     } catch (e) {
         global.log('Ctrl+Alt+Del: Main.screenShield.lock() failed: ' + e);
     }
-    
-    // Fallback methods
-    try {
-        GLib.spawn_command_line_async('dbus-send --session --type=method_call --dest=org.gnome.ScreenSaver /org/gnome/ScreenSaver org.gnome.ScreenSaver.Lock');
-    } catch (e) {
-        global.log('Ctrl+Alt+Del: D-Bus lock failed: ' + e);
-    }
+
+    // Fallback D-Bus method
+    _lockViaDBus();
 }
 
 // Dialog class
@@ -354,34 +388,55 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         // Lock button
         makeBtn('Lock', () => {
             _isLocking = true;
-            
+
             if (this._keyId) {
                 try {
                     this.actor.disconnect(this._keyId);
                     this._keyId = null;
                 } catch (e) {}
             }
-            
+
             this.close();
-            
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                _lockScreen();
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
-                    _isLocking = false;
-                    return false;
-                });
-                return false;
+
+            // Lock immediately and reset state after a short delay.
+            // Track the timeout id so it can be cleared on disable.
+            if (_lockResetId) {
+                GLib.source_remove(_lockResetId);
+                _lockResetId = null;
+            }
+
+            _lockScreen();
+
+            _lockResetId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 4000, () => {
+                _isLocking = false;
+                _lockResetId = null;
+                return GLib.SOURCE_REMOVE;
             });
         });
 
         // Switch User button (always create, but show/hide based on multiple users)
         this._switchUserButton = makeBtn('Switch User', () => {
             this.close();
-            try {
-                GLib.spawn_command_line_async('gdmflexiserver');
-            } catch (e) {
-                global.log('Ctrl+Alt+Del: gdmflexiserver failed: ' + e);
-            }
+
+            // Use GDM D-Bus interface instead of gdmflexiserver
+            Gio.DBus.system.call(
+                'org.gnome.DisplayManager',
+                '/org/gnome/DisplayManager/Seat0',
+                'org.gnome.DisplayManager.Seat',
+                'SwitchToGreeter',
+                null,
+                null,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (conn, res) => {
+                    try {
+                        conn.call_finish(res);
+                    } catch (e) {
+                        global.log('Ctrl+Alt+Del: Switch user failed: ' + e);
+                    }
+                }
+            );
         });
         
         // Initially set visibility based on multiple users (will be updated in open() if needed)
@@ -395,11 +450,25 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         // Sign Out button
         makeBtn('Sign Out', () => {
             this.close();
-            try {
-                GLib.spawn_command_line_async('gnome-session-quit --logout --no-prompt');
-            } catch (e) {
-                global.log('Ctrl+Alt+Del: Logout failed: ' + e);
-            }
+            // Use D-Bus instead of spawning gnome-session-quit
+            Gio.DBus.session.call(
+                'org.gnome.SessionManager',
+                '/org/gnome/SessionManager',
+                'org.gnome.SessionManager',
+                'Logout',
+                new GLib.Variant('(u)', [1]), // 1 = no prompt
+                null,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (conn, res) => {
+                    try {
+                        conn.call_finish(res);
+                    } catch (e) {
+                        global.log('Ctrl+Alt+Del: Logout failed: ' + e);
+                    }
+                }
+            );
         });
 
         // Task Manager button
@@ -509,7 +578,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             }
         };
 
-        const addPowerOption = (label, command, iconName) => {
+        const addPowerOption = (label, action, iconName) => {
             // Create a box layout for icon and label
             // Use x_expand: true to fill button width and prevent jitter
             let optionBox = new St.BoxLayout({
@@ -568,14 +637,12 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             const activate = () => {
                 hidePowerMenu();
                 this.close();
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                    try {
-                        GLib.spawn_command_line_async(command);
-                    } catch (e) {
-                        global.log(`Ctrl+Alt+Del: ${label} failed: ` + e);
-                    }
-                    return false;
-                });
+
+                try {
+                    action();
+                } catch (e) {
+                    global.log(`Ctrl+Alt+Del: ${label} failed: ` + e);
+                }
             };
 
             option.connect('clicked', () => {
@@ -678,9 +745,31 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             
         };
 
-        addPowerOption('Sleep', 'systemctl suspend', 'weather-clear-night-symbolic');
-        addPowerOption('Shut Down', 'systemctl poweroff', 'system-shutdown-symbolic');
-        addPowerOption('Restart', 'systemctl reboot', 'view-refresh-symbolic');
+        // Power actions via systemd-logind on the system bus
+        const callLogin1 = (method) => {
+            Gio.DBus.system.call(
+                'org.freedesktop.login1',
+                '/org/freedesktop/login1',
+                'org.freedesktop.login1.Manager',
+                method,
+                new GLib.Variant('(b)', [false]), // interactive = false
+                null,
+                Gio.DBusCallFlags.NONE,
+                -1,
+                null,
+                (conn, res) => {
+                    try {
+                        conn.call_finish(res);
+                    } catch (e) {
+                        global.log(`Ctrl+Alt+Del: ${method} failed: ` + e);
+                    }
+                }
+            );
+        };
+
+        addPowerOption('Sleep', () => callLogin1('Suspend'), 'weather-clear-night-symbolic');
+        addPowerOption('Shut Down', () => callLogin1('PowerOff'), 'system-shutdown-symbolic');
+        addPowerOption('Restart', () => callLogin1('Reboot'), 'view-refresh-symbolic');
 
         const showPowerMenu = (initialIndex = null) => {
             if (!this._powerMenuContainer) {
@@ -864,12 +953,13 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         
         // Monitor focus changes - let CSS handle focused state
         let lastFocusState = false;
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-            if (!powerButton || powerButton.is_destroyed()) return false;
-            
+        this._focusMonitorId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            if (!powerButton || powerButton.is_destroyed())
+                return GLib.SOURCE_REMOVE;
+
             const currentFocus = global.stage?.get_key_focus();
             const hasFocus = (currentFocus === powerButton);
-            
+
             if (hasFocus !== lastFocusState) {
                 lastFocusState = hasFocus;
                 if (hasFocus) {
@@ -882,7 +972,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
                     applyHoverStyle();
                 }
             }
-            return true;
+            return GLib.SOURCE_CONTINUE;
         });
 
         const togglePowerMenu = (initialIndex = null) => {
@@ -1707,48 +1797,33 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             }
         }
         
-        // Also check in idle callback to ensure it stays visible after dialog is fully rendered
-        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
-            if (this._switchUserButton) {
-                // Check if multiple users exist and show/hide the button accordingly
-                let hasMultiple = _hasMultipleUsers();
-                
-                if (hasMultiple) {
-                    // Multiple users exist (> 1) - show the button
-                    // Force visibility with multiple methods to ensure it's shown
-                    this._switchUserButton.visible = true;
-                    this._switchUserButton.set_opacity(255);
-                    this._switchUserButton.show();
-                    this._switchUserButton.can_focus = true;
-                    // Remove any CSS that might hide it and force visibility
-                    let currentStyle = this._switchUserButton.get_style() || '';
-                    // Remove any opacity/visibility/display rules that might hide it
-                    let cleanStyle = currentStyle.replace(/opacity\s*:[^;]+;?/gi, '')
-                                                 .replace(/visibility\s*:[^;]+;?/gi, '')
-                                                 .replace(/display\s*:[^;]+;?/gi, '');
-                    this._switchUserButton.set_style(cleanStyle + ' opacity: 1 !important; visibility: visible !important; display: block !important;');
-                    // Ensure button is in the layout and visible
-                    if (this._switchUserButton.get_parent()) {
-                        this._switchUserButton.get_parent().queue_redraw();
-                    }
-                    // Force a second check after a short delay to ensure it stays visible
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                        if (this._switchUserButton && _hasMultipleUsers()) {
-                            this._switchUserButton.visible = true;
-                            this._switchUserButton.set_opacity(255);
-                            this._switchUserButton.show();
-                            this._switchUserButton.can_focus = true;
-                        }
-                        return GLib.SOURCE_REMOVE;
-                    });
-                } else {
-                    // Only 1 user exists - hide the button
-                    this._switchUserButton.hide();
-                    this._switchUserButton.visible = false;
-                    this._switchUserButton.can_focus = false;
+        // Also check asynchronously via subprocess to avoid blocking the shell
+        _checkMultipleUsersAsync((hasMultiple) => {
+            if (!this._switchUserButton)
+                return;
+
+            if (hasMultiple) {
+                // Multiple users exist (> 1) - show the button
+                this._switchUserButton.visible = true;
+                this._switchUserButton.set_opacity(255);
+                this._switchUserButton.show();
+                this._switchUserButton.can_focus = true;
+
+                let currentStyle = this._switchUserButton.get_style() || '';
+                let cleanStyle = currentStyle.replace(/opacity\s*:[^;]+;?/gi, '')
+                                             .replace(/visibility\s*:[^;]+;?/gi, '')
+                                             .replace(/display\s*:[^;]+;?/gi, '');
+                this._switchUserButton.set_style(cleanStyle + ' opacity: 1 !important; visibility: visible !important; display: block !important;');
+
+                if (this._switchUserButton.get_parent()) {
+                    this._switchUserButton.get_parent().queue_redraw();
                 }
+            } else {
+                // Only 1 user exists - hide the button
+                this._switchUserButton.hide();
+                this._switchUserButton.visible = false;
+                this._switchUserButton.can_focus = false;
             }
-            return GLib.SOURCE_REMOVE;
         });
         
         // Set container widths BEFORE opening dialog to prevent visual glitches
@@ -1961,10 +2036,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         }
         
         // Try initial positioning immediately
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, () => {
-            this._updateAnchorPositions();
-            return false;
-        });
+        this._updateAnchorPositions();
         
         // Poll to update anchor positions until canvas is properly sized
         let updateCount = 0;
@@ -1998,6 +2070,11 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         if (this._overlayUpdateId) {
             GLib.source_remove(this._overlayUpdateId);
             this._overlayUpdateId = null;
+        }
+
+        if (this._focusMonitorId) {
+            GLib.source_remove(this._focusMonitorId);
+            this._focusMonitorId = null;
         }
 
         if (this._positionUpdateId) {
@@ -2043,10 +2120,15 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
         super.close();
     }
     
-    vfunc_destroy() {
+    destroy() {
         if (this._overlayUpdateId) {
             GLib.source_remove(this._overlayUpdateId);
             this._overlayUpdateId = null;
+        }
+
+        if (this._focusMonitorId) {
+            GLib.source_remove(this._focusMonitorId);
+            this._focusMonitorId = null;
         }
 
         if (this._positionUpdateId) {
@@ -2095,7 +2177,7 @@ class CtrlAltDelDialog extends ModalDialog.ModalDialog {
             _ctrlAltDelDialog = null;
         }
         
-        super.vfunc_destroy();
+        super.destroy();
     }
 
     _disconnectAnchorSignals() {
@@ -2141,9 +2223,16 @@ function _handleCtrlAltDel() {
             try {
                 _isOpeningOrClosing = true;
                 _ctrlAltDelDialog.close();
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+
+                if (_toggleStateTimeoutId) {
+                    GLib.source_remove(_toggleStateTimeoutId);
+                    _toggleStateTimeoutId = null;
+                }
+
+                _toggleStateTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
                     _isOpeningOrClosing = false;
-                    return false;
+                    _toggleStateTimeoutId = null;
+                    return GLib.SOURCE_REMOVE;
                 });
             } catch (e) {
                 global.log('Ctrl+Alt+Del: Error closing dialog: ' + e);
@@ -2161,15 +2250,21 @@ function _handleCtrlAltDel() {
     }
     
     // Create and open new dialog
-    _isOpeningOrClosing = true;
-    try {
-        _ctrlAltDelDialog = new CtrlAltDelDialog();
-        _ctrlAltDelDialog.open();
-        
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-            _isOpeningOrClosing = false;
-            return false;
-        });
+        _isOpeningOrClosing = true;
+        try {
+            _ctrlAltDelDialog = new CtrlAltDelDialog();
+            _ctrlAltDelDialog.open();
+
+            if (_toggleStateTimeoutId) {
+                GLib.source_remove(_toggleStateTimeoutId);
+                _toggleStateTimeoutId = null;
+            }
+
+            _toggleStateTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                _isOpeningOrClosing = false;
+                _toggleStateTimeoutId = null;
+                return GLib.SOURCE_REMOVE;
+            });
     } catch (e) {
         global.log('Ctrl+Alt+Del: Error creating/opening dialog: ' + e + (e && e.stack ? '\n' + e.stack : ''));
         _ctrlAltDelDialog = null;
@@ -2179,32 +2274,27 @@ function _handleCtrlAltDel() {
 
 
 function enable() {
-    // Try to register global keybinding
+    // Register global keybinding using ExtensionUtils.getSettings()
+    let keybindingSettings = null;
     try {
-        const Meta = imports.gi.Meta;
-        let keybindingSettings = null;
-        try {
-            keybindingSettings = new Gio.Settings({ schema_id: 'org.gnome.shell.extensions.ctrl-alt-del' });
-        } catch (e) {
-            global.log('Ctrl+Alt+Del: Schema not found, using file-based trigger');
-        }
-        
-        if (keybindingSettings) {
-            try {
-                global.display.add_keybinding(
-                    'ctrl-alt-del',
-                    keybindingSettings,
-                    Meta.KeyBindingFlags.NONE,
-                    () => {
-                        _handleCtrlAltDel();
-                    }
-                );
-            } catch (e) {
-                global.log('Ctrl+Alt+Del: Could not register keybinding: ' + e);
-            }
-        }
+        keybindingSettings = ExtensionUtils.getSettings('org.gnome.shell.extensions.ctrl-alt-del');
     } catch (e) {
-        global.log('Ctrl+Alt+Del: Keybinding setup failed: ' + e);
+        global.log('Ctrl+Alt+Del: Schema not found, using file-based trigger');
+    }
+
+    if (keybindingSettings) {
+        try {
+            global.display.add_keybinding(
+                'ctrl-alt-del',
+                keybindingSettings,
+                Meta.KeyBindingFlags.NONE,
+                () => {
+                    _handleCtrlAltDel();
+                }
+            );
+        } catch (e) {
+            global.log('Ctrl+Alt+Del: Could not register keybinding: ' + e);
+        }
     }
     
     // Set up file-based trigger polling
@@ -2235,6 +2325,16 @@ function disable() {
     if (_pollingId) {
         GLib.source_remove(_pollingId);
         _pollingId = null;
+    }
+
+    if (_lockResetId) {
+        GLib.source_remove(_lockResetId);
+        _lockResetId = null;
+    }
+
+    if (_toggleStateTimeoutId) {
+        GLib.source_remove(_toggleStateTimeoutId);
+        _toggleStateTimeoutId = null;
     }
     
     _removeBlackOverlays();
